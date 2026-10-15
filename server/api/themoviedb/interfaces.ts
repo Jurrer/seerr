@@ -302,6 +302,17 @@ export interface TmdbTvDetails {
     id: number;
     results?: { [iso_3166_1: string]: TmdbWatchProviders };
   };
+  episode_groups?: TmdbTvEpisodeGroupResult[];
+}
+
+export interface TmdbTvEpisodeGroupResult {
+  id: string;
+  name: string;
+  description?: string;
+  episode_count: number;
+  group_count: number;
+  network?: number | null;
+  type: number;
 }
 
 export interface TmdbTvScanDetails {

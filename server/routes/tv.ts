@@ -6,13 +6,61 @@ import type { TmdbKeyword } from '@server/api/themoviedb/interfaces';
 import { MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
+import TvOrdering from '@server/entity/TvOrdering';
 import { Watchlist } from '@server/entity/Watchlist';
+import { Permission } from '@server/lib/permissions';
 import logger from '@server/logger';
+import { isAuthenticated } from '@server/middleware/auth';
 import { mapTvResult } from '@server/models/Search';
-import { mapSeasonWithEpisodes, mapTvDetails } from '@server/models/Tv';
-import { Router } from 'express';
+import {
+  mapSeasonWithEpisodes,
+  mapTvDetails,
+  mapTvOrdering,
+} from '@server/models/Tv';
+import { Router, type Request } from 'express';
 
 const tvRoutes = Router();
+
+const DEFAULT_ORDERING_ID = 'default';
+const BROKEN_ORDERING_ERROR =
+  'The applied TMDB ordering is no longer available.';
+
+async function getAppliedOrdering(tvId: number) {
+  return getRepository(TvOrdering).findOne({ where: { tmdbId: tvId } });
+}
+
+async function applyOrdering(tvId: number, orderingId: string) {
+  const repository = getRepository(TvOrdering);
+  const existing = await repository.findOne({ where: { tmdbId: tvId } });
+
+  if (existing) {
+    existing.orderingId = orderingId;
+    return repository.save(existing);
+  }
+
+  return repository.save(new TvOrdering({ tmdbId: tvId, orderingId }));
+}
+
+async function clearOrdering(tvId: number) {
+  const repository = getRepository(TvOrdering);
+  const existing = await repository.findOne({ where: { tmdbId: tvId } });
+
+  if (existing) {
+    await repository.remove(existing);
+  }
+}
+
+function invalidOrdering() {
+  return {
+    status: 422,
+    message:
+      'Invalid orderingId. The ordering does not exist for this TV series.',
+  };
+}
+
+function getLanguage(req: Request) {
+  return (req.query.language as string) ?? req.locale ?? 'en';
+}
 
 tvRoutes.get('/:id', async (req, res, next) => {
   const tmdb = new TheMovieDb();
@@ -42,7 +90,36 @@ tvRoutes.get('/:id', async (req, res, next) => {
       },
     });
 
-    const data = mapTvDetails(tv, media?.filter(req.user), onUserWatchlist);
+    const appliedOrdering = await getAppliedOrdering(tv.id);
+    let currentOrdering;
+    if (appliedOrdering) {
+      try {
+        const groups =
+          tmdbTv.episode_groups ??
+          (await tmdb.getTvEpisodeGroups({ tvId: tv.id })).results;
+        const group = groups.find(
+          (candidate) => candidate.id === appliedOrdering.orderingId
+        );
+        currentOrdering = group
+          ? mapTvOrdering(group, true)
+          : {
+              id: appliedOrdering.orderingId,
+              error: BROKEN_ORDERING_ERROR,
+            };
+      } catch {
+        currentOrdering = {
+          id: appliedOrdering.orderingId,
+          error: BROKEN_ORDERING_ERROR,
+        };
+      }
+    }
+
+    const data = mapTvDetails(
+      tv,
+      media?.filter(req.user),
+      onUserWatchlist,
+      currentOrdering
+    );
 
     // TMDB issue where it doesnt fallback to English when no overview is available in requested locale.
     if (!data.overview) {
@@ -65,6 +142,83 @@ tvRoutes.get('/:id', async (req, res, next) => {
     });
   }
 });
+
+tvRoutes.get('/:id/orderings', async (req, res, next) => {
+  const tvId = Number(req.params.id);
+  try {
+    const tmdb = new TheMovieDb();
+    const show = await tmdb.getTvShow({
+      tvId,
+      language: getLanguage(req),
+    });
+    const groups =
+      show.episode_groups ??
+      (await tmdb.getTvEpisodeGroups({ tvId, language: getLanguage(req) }))
+        .results;
+    const appliedOrdering = await getAppliedOrdering(tvId);
+
+    return res.status(200).json([
+      {
+        id: DEFAULT_ORDERING_ID,
+        name: 'Seasons',
+        episodeCount: show.number_of_episodes,
+        groupCount: Math.max(show.number_of_seasons, 1),
+        isApplied: !appliedOrdering,
+      },
+      ...groups.map((group) =>
+        mapTvOrdering(group, group.id === appliedOrdering?.orderingId)
+      ),
+    ]);
+  } catch (e) {
+    logger.debug('Something went wrong retrieving TV orderings', {
+      label: 'API',
+      errorMessage: e.message,
+      tvId,
+    });
+    return next({ status: 500, message: 'Unable to retrieve TV orderings.' });
+  }
+});
+
+tvRoutes.put(
+  '/:id/ordering',
+  isAuthenticated(Permission.MANAGE_SETTINGS),
+  async (req, res, next) => {
+    const tvId = Number(req.params.id);
+    try {
+      const orderingId = ((req.body?.orderingId ?? '') as string).trim();
+
+      if (!orderingId) {
+        return next(invalidOrdering());
+      }
+
+      if (orderingId === DEFAULT_ORDERING_ID) {
+        await clearOrdering(tvId);
+        return res.status(204).send();
+      }
+
+      const tmdb = new TheMovieDb();
+      const show = await tmdb.getTvShow({ tvId });
+      const groups =
+        show.episode_groups ??
+        (await tmdb.getTvEpisodeGroups({ tvId })).results;
+      const group = groups.find((candidate) => candidate.id === orderingId);
+
+      if (!group || group.episode_count <= 0 || group.group_count <= 0) {
+        return next(invalidOrdering());
+      }
+
+      await applyOrdering(tvId, orderingId);
+      return res.status(204).send();
+    } catch (e) {
+      logger.debug('Something went wrong applying a TV ordering', {
+        label: 'API',
+        errorMessage: e.message,
+        tvId,
+      });
+      return next({ status: 500, message: 'Unable to apply TV ordering.' });
+    }
+  }
+);
 
 tvRoutes.get('/:id/season/:seasonNumber', async (req, res, next) => {
   try {

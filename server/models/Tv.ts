@@ -1,7 +1,9 @@
+import { TV_ORDERING_TYPE_NAMES } from '@server/api/themoviedb';
 import type {
   TmdbNetwork,
   TmdbSeasonWithEpisodes,
   TmdbTvDetails,
+  TmdbTvEpisodeGroupResult,
   TmdbTvEpisodeResult,
   TmdbTvRatingResult,
   TmdbTvSeasonResult,
@@ -61,6 +63,17 @@ interface SpokenLanguage {
   name: string;
 }
 
+export interface TvOrderingSummary {
+  id: string;
+  name?: string;
+  description?: string;
+  episodeCount?: number;
+  groupCount?: number;
+  type?: string;
+  isApplied?: boolean;
+  error?: string;
+}
+
 export interface TvDetails {
   id: number;
   backdropPath?: string;
@@ -110,6 +123,7 @@ export interface TvDetails {
   externalIds: ExternalIds;
   keywords: Keyword[];
   mediaInfo?: Media;
+  currentOrdering?: TvOrderingSummary;
   watchProviders?: WatchProviders[];
   onUserWatchlist?: boolean;
 }
@@ -163,7 +177,8 @@ export const mapNetwork = (network: TmdbNetwork): TvNetwork => ({
 export const mapTvDetails = (
   show: TmdbTvDetails,
   media?: Media,
-  userWatchlist?: boolean
+  userWatchlist?: boolean,
+  currentOrdering?: TvOrderingSummary
 ): TvDetails => ({
   createdBy: show.created_by,
   episodeRunTime: show.episode_run_time,
@@ -224,6 +239,20 @@ export const mapTvDetails = (
     name: keyword.name,
   })),
   mediaInfo: media,
+  currentOrdering,
   watchProviders: mapWatchProviders(show['watch/providers']?.results ?? {}),
   onUserWatchlist: userWatchlist,
+});
+
+export const mapTvOrdering = (
+  ordering: TmdbTvEpisodeGroupResult,
+  isApplied = false
+): TvOrderingSummary => ({
+  id: ordering.id,
+  name: ordering.name,
+  description: ordering.description,
+  episodeCount: ordering.episode_count,
+  groupCount: ordering.group_count,
+  type: TV_ORDERING_TYPE_NAMES[ordering.type],
+  isApplied,
 });

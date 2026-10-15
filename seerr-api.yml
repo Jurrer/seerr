@@ -1075,6 +1075,46 @@ components:
           type: number
         voteCount:
           type: number
+    TvOrdering:
+      type: object
+      properties:
+    id:
+      type: string
+      example: 5f0c1a2b3c4d5e6f7a8b9c0d
+    name:
+      type: string
+      example: Absolute Order
+    description:
+      type: string
+    episodeCount:
+      type: number
+    groupCount:
+      type: number
+    type:
+      type: string
+      enum:
+        - original_air_date
+        - absolute
+        - dvd
+        - digital
+        - story_arc
+        - production
+        - tv
+    isApplied:
+      type: boolean
+    error:
+      type: string
+      example: The applied TMDB ordering is no longer available.
+      required:
+        - id
+    TvOrderingApply:
+      type: object
+      properties:
+    orderingId:
+      type: string
+      example: default
+      required:
+        - orderingId
     Season:
       type: object
       properties:
@@ -1231,6 +1271,8 @@ components:
             $ref: '#/components/schemas/Keyword'
         mediaInfo:
           $ref: '#/components/schemas/MediaInfo'
+        currentOrdering:
+          $ref: '#/components/schemas/TvOrdering'
         watchProviders:
           type: array
           items:
@@ -7048,6 +7090,66 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TvDetails'
+  /tv/{tvId}/orderings:
+    get:
+      summary: List TV orderings
+      description: Returns the standard season ordering and TMDB's alternate episode-group orderings.
+      tags:
+        - tv
+      parameters:
+        - in: path
+          name: tvId
+          required: true
+          schema:
+            type: number
+            example: 76479
+        - in: query
+          name: language
+          schema:
+            type: string
+            example: en
+      responses:
+        '200':
+          description: TV orderings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TvOrdering'
+  /tv/{tvId}/ordering:
+    put:
+      summary: Apply a TV ordering
+      description: Applies an alternate TMDB ordering at the series level, or clears it with `default`. Requires `MANAGE_SETTINGS`.
+      tags:
+        - tv
+      parameters:
+        - in: path
+          name: tvId
+          required: true
+          schema:
+            type: number
+            example: 76479
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TvOrderingApply'
+      responses:
+        '204':
+          description: Ordering applied
+        '422':
+          description: Invalid or missing ordering ID
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: number
+                  message:
+                    type: string
   /tv/{tvId}/season/{seasonNumber}:
     get:
       summary: Get season details and episode list

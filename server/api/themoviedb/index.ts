@@ -24,6 +24,7 @@ import type {
   TmdbSearchTvResponse,
   TmdbSeasonWithEpisodes,
   TmdbTvDetails,
+  TmdbTvEpisodeGroupResult,
   TmdbTvScanDetails,
   TmdbUpcomingMoviesResponse,
   TmdbWatchProviderDetails,
@@ -144,7 +145,17 @@ const TV_DETAILS_TTL = 43200;
 const SCAN_TTL = 900;
 
 const TV_DETAILS_APPEND_TO_RESPONSE =
-  'aggregate_credits,credits,external_ids,keywords,videos,content_ratings,watch/providers';
+  'aggregate_credits,credits,external_ids,keywords,videos,content_ratings,watch/providers,episode_groups';
+
+export const TV_ORDERING_TYPE_NAMES: Record<number, string> = {
+  1: 'original_air_date',
+  2: 'absolute',
+  3: 'dvd',
+  4: 'digital',
+  5: 'story_arc',
+  6: 'production',
+  7: 'tv',
+};
 
 const TV_SCAN_APPEND_TO_RESPONSE = 'keywords,external_ids';
 
@@ -479,6 +490,19 @@ class TheMovieDb extends ExternalAPI implements TvShowProvider {
       });
     }
   };
+
+  public getTvEpisodeGroups({
+    tvId,
+    language = this.locale,
+  }: {
+    tvId: number;
+    language?: string;
+  }): Promise<{ results: TmdbTvEpisodeGroupResult[] }> {
+    return this.get<{ results: TmdbTvEpisodeGroupResult[] }>(
+      `/tv/${tvId}/episode_groups`,
+      { params: { language } }
+    );
+  }
 
   public getTvShowForScan = async ({
     tvId,
