@@ -3,7 +3,9 @@ import { before, beforeEach, describe, it } from 'node:test';
 
 import TheMovieDb from '@server/api/themoviedb';
 import type { TmdbTvDetails } from '@server/api/themoviedb/interfaces';
+import { MediaStatus } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
+import TvEpisode from '@server/entity/TvEpisode';
 import TvOrdering from '@server/entity/TvOrdering';
 import { User } from '@server/entity/User';
 import { Permission } from '@server/lib/permissions';
@@ -328,6 +330,91 @@ describe('PUT /tv/:id/ordering', () => {
 });
 
 describe('GET /tv/:id/ordering', () => {
+  it('seeds canonical episodes and aggregates quality-independent availability', async () => {
+    await seedOrdering(TV_ID, ORDERING_ID);
+    await getRepository(TvEpisode).save(
+      new TvEpisode({
+        tmdbId: TV_ID,
+        seasonNumber: 1,
+        episodeNumber: 1,
+        status: MediaStatus.AVAILABLE,
+      })
+    );
+    const agent = await loginAs('demo@seerr.dev');
+    const res = await agent.get(`/tv/${TV_ID}/ordering`);
+
+    assert.strictEqual(res.status, 200);
+    const episodes = await getRepository(TvEpisode).find({
+      where: { tmdbId: TV_ID },
+      order: { seasonNumber: 'ASC', episodeNumber: 'ASC' },
+    });
+    assert.deepStrictEqual(
+      episodes.map((episode) => ({
+        seasonNumber: episode.seasonNumber,
+        episodeNumber: episode.episodeNumber,
+      })),
+      [
+        { seasonNumber: 1, episodeNumber: 1 },
+        { seasonNumber: 1, episodeNumber: 2 },
+      ]
+    );
+    assert.deepStrictEqual(res.body.groups[0], {
+      id: 'group-1',
+      name: 'First Arc',
+      episodeCount: 2,
+      status: 4,
+      status4k: 1,
+      availableEpisodeCount: 1,
+      available4kEpisodeCount: 0,
+      episodes: [
+        {
+          id: 3,
+          name: 'Canonical 1x1',
+          airDate: '2020-01-01',
+          position: 1,
+          canonicalEpisodeNumber: 1,
+          canonicalSeasonNumber: 1,
+          overview: 'First canonical episode',
+          productionCode: 'PC003',
+          stillPath: '/first.jpg',
+          voteAverage: 9.1,
+          voteCount: 3,
+          status: 5,
+          status4k: 1,
+        },
+        {
+          id: 1,
+          name: 'Canonical 1x2 First Position',
+          airDate: '2020-01-02',
+          position: 2,
+          canonicalEpisodeNumber: 2,
+          canonicalSeasonNumber: 1,
+          overview: 'Second ordering position',
+          productionCode: 'PC001',
+          stillPath: '/first-position.jpg',
+          voteAverage: 7.5,
+          voteCount: 1,
+          status: 1,
+          status4k: 1,
+        },
+      ],
+    });
+    assert.deepStrictEqual(
+      {
+        status: res.body.groups[1].status,
+        status4k: res.body.groups[1].status4k,
+        availableEpisodeCount: res.body.groups[1].availableEpisodeCount,
+        available4kEpisodeCount: res.body.groups[1].available4kEpisodeCount,
+      },
+      {
+        status: 1,
+        status4k: 1,
+        availableEpisodeCount: 0,
+        available4kEpisodeCount: 0,
+      }
+    );
+  });
+
   it('returns the applied ordering groups in TMDB order', async () => {
     await seedOrdering(TV_ID, ORDERING_ID);
     const agent = await loginAs('demo@seerr.dev');
@@ -347,6 +434,10 @@ describe('GET /tv/:id/ordering', () => {
           id: 'group-1',
           name: 'First Arc',
           episodeCount: 2,
+          status: 1,
+          status4k: 1,
+          availableEpisodeCount: 0,
+          available4kEpisodeCount: 0,
           episodes: [
             {
               id: 3,
@@ -360,6 +451,8 @@ describe('GET /tv/:id/ordering', () => {
               stillPath: '/first.jpg',
               voteAverage: 9.1,
               voteCount: 3,
+              status: 1,
+              status4k: 1,
             },
             {
               id: 1,
@@ -373,6 +466,8 @@ describe('GET /tv/:id/ordering', () => {
               stillPath: '/first-position.jpg',
               voteAverage: 7.5,
               voteCount: 1,
+              status: 1,
+              status4k: 1,
             },
           ],
         },
@@ -380,6 +475,10 @@ describe('GET /tv/:id/ordering', () => {
           id: 'group-2',
           name: 'Later Arc',
           episodeCount: 1,
+          status: 1,
+          status4k: 1,
+          availableEpisodeCount: 0,
+          available4kEpisodeCount: 0,
           episodes: [
             {
               id: 2,
@@ -393,6 +492,8 @@ describe('GET /tv/:id/ordering', () => {
               stillPath: '/second.jpg',
               voteAverage: 8.4,
               voteCount: 2,
+              status: 1,
+              status4k: 1,
             },
           ],
         },

@@ -27,6 +27,7 @@ import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import MediaRequest from '@server/entity/MediaRequest';
 import Season from '@server/entity/Season';
+import TvEpisode from '@server/entity/TvEpisode';
 import { User } from '@server/entity/User';
 import availabilitySync from '@server/lib/availabilitySync';
 import type { RadarrSettings, SonarrSettings } from '@server/lib/settings';
@@ -1727,7 +1728,8 @@ describe('AvailabilitySync', () => {
   describe('show availability - merged Plex versions', () => {
     function fakeVersionedEpisode(
       ratingKey: string,
-      widths: number[]
+      widths: number[],
+      episodeNumber = 1
     ): PlexMetadata {
       return {
         ratingKey,
@@ -1735,7 +1737,7 @@ describe('AvailabilitySync', () => {
         type: 'movie' as const,
         title: ratingKey,
         Guid: [],
-        index: 1,
+        index: episodeNumber,
         leafCount: 0,
         viewedLeafCount: 0,
         addedAt: 0,
@@ -1757,6 +1759,109 @@ describe('AvailabilitySync', () => {
         })),
       };
     }
+
+    it('should add canonical episode availability without overwriting the other quality', async () => {
+      configurePlex();
+      configureSonarr([
+        { syncEnabled: true },
+        { is4k: true, syncEnabled: true },
+      ]);
+
+      const mediaRepository = getRepository(Media);
+      const episodeRepository = getRepository(TvEpisode);
+
+      const media = new Media();
+      media.tmdbId = 687175;
+      media.mediaType = MediaType.TV;
+      media.status = MediaStatus.AVAILABLE;
+      media.status4k = MediaStatus.AVAILABLE;
+      media.ratingKey = 'canonical-show-rk';
+      media.ratingKey4k = 'canonical-show-rk';
+      media.seasons = [
+        new Season({
+          seasonNumber: 1,
+          status: MediaStatus.AVAILABLE,
+          status4k: MediaStatus.AVAILABLE,
+        }),
+      ];
+      await mediaRepository.save(media);
+
+      await episodeRepository.save([
+        new TvEpisode({
+          tmdbId: media.tmdbId,
+          seasonNumber: 1,
+          episodeNumber: 1,
+          status: MediaStatus.AVAILABLE,
+        }),
+        new TvEpisode({
+          tmdbId: media.tmdbId,
+          seasonNumber: 1,
+          episodeNumber: 2,
+          status4k: MediaStatus.AVAILABLE,
+        }),
+        new TvEpisode({
+          tmdbId: media.tmdbId,
+          seasonNumber: 1,
+          episodeNumber: 4,
+        }),
+      ]);
+
+      getMetadataImpl = async (key: string) => {
+        if (key === 'canonical-show-rk') {
+          return fakePlexShow('canonical-show-rk');
+        }
+        throw new Error('404');
+      };
+      getChildrenMetadataImpl = async (key: string) => {
+        if (key === 'canonical-show-rk') {
+          return [fakePlexSeason(1, 'canonical-s1-rk')];
+        }
+        if (key === 'canonical-s1-rk') {
+          return [
+            fakeVersionedEpisode('canonical-s1-e1', [1920], 1),
+            fakeVersionedEpisode('canonical-s1-e2', [3840], 2),
+            fakeVersionedEpisode('canonical-s1-e3', [1920], 3),
+          ];
+        }
+        return [];
+      };
+
+      await availabilitySync.run();
+
+      const updatedEpisodes = await episodeRepository.find({
+        where: { tmdbId: media.tmdbId },
+        order: { episodeNumber: 'ASC' },
+      });
+      assert.deepStrictEqual(
+        updatedEpisodes.map((episode) => ({
+          episodeNumber: episode.episodeNumber,
+          status: episode.status,
+          status4k: episode.status4k,
+        })),
+        [
+          {
+            episodeNumber: 1,
+            status: MediaStatus.AVAILABLE,
+            status4k: MediaStatus.UNKNOWN,
+          },
+          {
+            episodeNumber: 2,
+            status: MediaStatus.UNKNOWN,
+            status4k: MediaStatus.AVAILABLE,
+          },
+          {
+            episodeNumber: 3,
+            status: MediaStatus.AVAILABLE,
+            status4k: MediaStatus.UNKNOWN,
+          },
+          {
+            episodeNumber: 4,
+            status: MediaStatus.UNKNOWN,
+            status4k: MediaStatus.UNKNOWN,
+          },
+        ]
+      );
+    });
 
     it('should remove a stale 4K season status when the shared item has no 4K episodes for that season', async () => {
       configurePlex();

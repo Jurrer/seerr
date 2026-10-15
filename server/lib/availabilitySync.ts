@@ -19,6 +19,7 @@ import type Season from '@server/entity/Season';
 import { User } from '@server/entity/User';
 import type { RadarrSettings, SonarrSettings } from '@server/lib/settings';
 import { getSettings } from '@server/lib/settings';
+import { updateTvEpisodeAvailability } from '@server/lib/tvEpisode';
 import logger from '@server/logger';
 import { getHostname } from '@server/utils/getHostname';
 
@@ -1042,19 +1043,32 @@ class AvailabilitySync {
             seasonMeta.ratingKey
           );
 
-          const episodeVersions =
-            episodes?.flatMap((episode) => episode.Media ?? []) ?? [];
+          const availableEpisodes =
+            episodes?.filter(
+              (episode) =>
+                episode.index !== undefined &&
+                (is4k
+                  ? episode.Media?.some(
+                      (mediaItem) => (mediaItem.width ?? 0) >= 2000
+                    )
+                  : this.enable4kShow
+                    ? episode.Media?.some(
+                        (mediaItem) => (mediaItem.width ?? 0) < 2000
+                      )
+                    : episode.Media?.length)
+            ) ?? [];
+          seasonExistsInPlex = availableEpisodes.length > 0;
 
-          if (is4k) {
-            seasonExistsInPlex = episodeVersions.some(
-              (mediaItem) => (mediaItem.width ?? 0) >= 2000
+          if (availableEpisodes.length > 0) {
+            await updateTvEpisodeAvailability(
+              media.tmdbId,
+              availableEpisodes.map((episode) => ({
+                tmdbId: media.tmdbId,
+                seasonNumber: season.seasonNumber,
+                episodeNumber: episode.index,
+              })),
+              is4k
             );
-          } else if (this.enable4kShow) {
-            seasonExistsInPlex = episodeVersions.some(
-              (mediaItem) => (mediaItem.width ?? 0) < 2000
-            );
-          } else {
-            seasonExistsInPlex = episodeVersions.length > 0;
           }
         } catch {
           // If we can't fetch episodes, assume the season exists
@@ -1194,10 +1208,43 @@ class AvailabilitySync {
             // virtual episodes.
             const episodes = await this.jellyfinClient.getEpisodes(
               seriesId,
-              seasonMeta.Id
+              seasonMeta.Id,
+              { includeMediaInfo: true }
             );
 
-            seasonExistsInJellyfin = episodes.length > 0;
+            const availableEpisodes = episodes.filter((episode) => {
+              if (episode.IndexNumber === undefined) {
+                return false;
+              }
+
+              const width = Math.max(
+                0,
+                ...(
+                  episode.MediaSources?.flatMap(
+                    (source) => source.MediaStreams ?? []
+                  ) ?? []
+                ).map((stream) => stream.Width ?? 0)
+              );
+
+              return is4k
+                ? width >= 2000
+                : this.enable4kShow
+                  ? width < 2000
+                  : true;
+            });
+            seasonExistsInJellyfin = availableEpisodes.length > 0;
+
+            if (availableEpisodes.length > 0) {
+              await updateTvEpisodeAvailability(
+                media.tmdbId,
+                availableEpisodes.map((episode) => ({
+                  tmdbId: media.tmdbId,
+                  seasonNumber: season.seasonNumber,
+                  episodeNumber: episode.IndexNumber ?? 0,
+                })),
+                is4k
+              );
+            }
           } catch {
             // If we can't fetch episodes, assume the season exists
             // to avoid false removal

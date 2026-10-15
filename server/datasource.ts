@@ -8,6 +8,7 @@ import OverrideRule from '@server/entity/OverrideRule';
 import Season from '@server/entity/Season';
 import SeasonRequest from '@server/entity/SeasonRequest';
 import { Session } from '@server/entity/Session';
+import TvEpisode from '@server/entity/TvEpisode';
 import TvOrdering from '@server/entity/TvOrdering';
 import { User } from '@server/entity/User';
 import { UserPushSubscription } from '@server/entity/UserPushSubscription';
@@ -36,6 +37,7 @@ const entities = [
   Season,
   SeasonRequest,
   Session,
+  TvEpisode,
   TvOrdering,
   User,
   UserPushSubscription,

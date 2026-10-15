@@ -1133,12 +1133,22 @@ components:
           type: number
         voteCount:
           type: number
+        status:
+          type: number
+          example: 1
+          description: Availability of the canonical episode. 1 = `UNKNOWN`, 4 = `PARTIALLY_AVAILABLE`, 5 = `AVAILABLE`
+        status4k:
+          type: number
+          example: 1
+          description: 4K availability of the canonical episode. 1 = `UNKNOWN`, 4 = `PARTIALLY_AVAILABLE`, 5 = `AVAILABLE`
       required:
         - id
         - name
         - position
         - canonicalEpisodeNumber
         - canonicalSeasonNumber
+        - status
+        - status4k
     TvOrderingGroup:
       type: object
       properties:
@@ -1148,6 +1158,18 @@ components:
           type: string
         episodeCount:
           type: number
+        status:
+          type: number
+          example: 1
+          description: Availability of the ordering group. 1 = `UNKNOWN`, 4 = `PARTIALLY_AVAILABLE`, 5 = `AVAILABLE`
+        status4k:
+          type: number
+          example: 1
+          description: 4K availability of the ordering group. 1 = `UNKNOWN`, 4 = `PARTIALLY_AVAILABLE`, 5 = `AVAILABLE`
+        availableEpisodeCount:
+          type: number
+        available4kEpisodeCount:
+          type: number
         episodes:
           type: array
           items:
@@ -1155,6 +1177,10 @@ components:
       required:
         - id
         - episodeCount
+        - status
+        - status4k
+        - availableEpisodeCount
+        - available4kEpisodeCount
         - episodes
     TvOrderingDetails:
       allOf:

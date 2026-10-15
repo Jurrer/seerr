@@ -10,7 +10,9 @@ import type {
   TmdbTvRatingResult,
   TmdbTvSeasonResult,
 } from '@server/api/themoviedb/interfaces';
+import { MediaStatus } from '@server/constants/media';
 import type Media from '@server/entity/Media';
+import type TvEpisode from '@server/entity/TvEpisode';
 import type { Video } from './Movie';
 import type {
   Cast,
@@ -88,6 +90,8 @@ export interface TvOrderingEpisode {
   stillPath?: string;
   voteAverage: number;
   voteCount: number;
+  status: MediaStatus;
+  status4k: MediaStatus;
 }
 
 export interface TvOrderingGroup {
@@ -95,6 +99,10 @@ export interface TvOrderingGroup {
   name?: string;
   episodeCount: number;
   episodes: TvOrderingEpisode[];
+  status: MediaStatus;
+  status4k: MediaStatus;
+  availableEpisodeCount: number;
+  available4kEpisodeCount: number;
 }
 
 export interface TvOrdering extends TvOrderingSummary {
@@ -171,7 +179,8 @@ const mapEpisodeResult = (episode: TmdbTvEpisodeResult): Episode => ({
 
 const mapTvOrderingEpisode = (
   episode: TmdbTvEpisodeGroupEpisode,
-  position: number
+  position: number,
+  canonicalEpisode?: TvEpisode
 ): TvOrderingEpisode => ({
   airDate: episode.air_date,
   canonicalEpisodeNumber: episode.episode_number,
@@ -184,7 +193,37 @@ const mapTvOrderingEpisode = (
   stillPath: episode.still_path,
   voteAverage: episode.vote_average,
   voteCount: episode.vote_count,
+  status: canonicalEpisode?.status ?? MediaStatus.UNKNOWN,
+  status4k: canonicalEpisode?.status4k ?? MediaStatus.UNKNOWN,
 });
+
+const getCanonicalEpisode = (
+  episodes: TvEpisode[],
+  seasonNumber: number,
+  episodeNumber: number
+) =>
+  episodes.find(
+    (episode) =>
+      episode.seasonNumber === seasonNumber &&
+      episode.episodeNumber === episodeNumber
+  );
+
+const getAvailability = (
+  episodes: { status: MediaStatus; status4k: MediaStatus }[],
+  is4k: boolean
+) => {
+  const availableCount = episodes.filter(
+    (episode) => episode[is4k ? 'status4k' : 'status'] === MediaStatus.AVAILABLE
+  ).length;
+
+  if (episodes.length > 0 && availableCount === episodes.length) {
+    return MediaStatus.AVAILABLE;
+  }
+
+  return availableCount > 0
+    ? MediaStatus.PARTIALLY_AVAILABLE
+    : MediaStatus.UNKNOWN;
+};
 
 const mapSeasonResult = (season: TmdbTvSeasonResult): Season => ({
   airDate: season.air_date,
@@ -302,17 +341,48 @@ export const mapTvOrdering = (
 });
 
 export const mapTvOrderingGroups = (
-  ordering: TmdbTvEpisodeGroupDetails
+  ordering: TmdbTvEpisodeGroupDetails,
+  canonicalEpisodes: TvEpisode[] = []
 ): TvOrdering => ({
   ...mapTvOrdering(ordering, true),
   groups: [...ordering.groups]
     .sort((group, nextGroup) => group.order - nextGroup.order)
-    .map((group) => ({
-      episodeCount: group.episodes.length,
-      episodes: [...group.episodes]
-        .sort((episode, nextEpisode) => episode.order - nextEpisode.order)
-        .map((episode, index) => mapTvOrderingEpisode(episode, index + 1)),
-      id: group.id,
-      name: group.name,
-    })),
+    .map((group) => {
+      const knownEpisodes = group.episodes
+        .map((episode) =>
+          getCanonicalEpisode(
+            canonicalEpisodes,
+            episode.season_number,
+            episode.episode_number
+          )
+        )
+        .filter((episode): episode is TvEpisode => episode !== undefined);
+
+      return {
+        episodeCount: group.episodes.length,
+        episodes: [...group.episodes]
+          .sort((episode, nextEpisode) => episode.order - nextEpisode.order)
+          .map((episode, index) =>
+            mapTvOrderingEpisode(
+              episode,
+              index + 1,
+              getCanonicalEpisode(
+                canonicalEpisodes,
+                episode.season_number,
+                episode.episode_number
+              )
+            )
+          ),
+        id: group.id,
+        name: group.name,
+        status: getAvailability(knownEpisodes, false),
+        status4k: getAvailability(knownEpisodes, true),
+        availableEpisodeCount: knownEpisodes.filter(
+          (episode) => episode.status === MediaStatus.AVAILABLE
+        ).length,
+        available4kEpisodeCount: knownEpisodes.filter(
+          (episode) => episode.status4k === MediaStatus.AVAILABLE
+        ).length,
+      };
+    }),
 });

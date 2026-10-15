@@ -9,6 +9,7 @@ import Media from '@server/entity/Media';
 import TvOrdering from '@server/entity/TvOrdering';
 import { Watchlist } from '@server/entity/Watchlist';
 import { Permission } from '@server/lib/permissions';
+import { seedOrderingEpisodes } from '@server/lib/tvEpisode';
 import logger from '@server/logger';
 import { isAuthenticated } from '@server/middleware/auth';
 import { mapTvResult } from '@server/models/Search';
@@ -193,8 +194,9 @@ tvRoutes.get('/:id/ordering', async (req, res, next) => {
       orderingId: appliedOrdering.orderingId,
       language: getLanguage(req),
     });
+    const episodes = await seedOrderingEpisodes(tvId, ordering);
 
-    return res.status(200).json(mapTvOrderingGroups(ordering));
+    return res.status(200).json(mapTvOrderingGroups(ordering, episodes));
   } catch (e) {
     logger.debug('Something went wrong retrieving the applied TV ordering', {
       label: 'API',
