@@ -401,9 +401,16 @@ export class MediaRequest {
           );
         }
 
-        const ordering = await tmdb.getTvEpisodeGroup({
-          orderingId: appliedOrdering.orderingId,
-        });
+        let ordering: Awaited<ReturnType<typeof tmdb.getTvEpisodeGroup>>;
+        try {
+          ordering = await tmdb.getTvEpisodeGroup({
+            orderingId: appliedOrdering.orderingId,
+          });
+        } catch {
+          throw new OrderingGroupRequestError(
+            'The applied ordering is no longer available.'
+          );
+        }
 
         if (ordering.id !== appliedOrdering.orderingId) {
           throw new OrderingGroupRequestError(

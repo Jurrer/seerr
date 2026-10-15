@@ -13,6 +13,7 @@ import {
   DuplicateMediaRequestError,
   MediaRequest,
   NoSeasonsAvailableError,
+  OrderingGroupRequestError,
   QuotaRestrictedError,
 } from '@server/entity/MediaRequest';
 import OrderingGroupEpisodeRequest from '@server/entity/OrderingGroupEpisodeRequest';
@@ -25,30 +26,38 @@ import { Permission } from '@server/lib/permissions';
 import { setupTestDb } from '@server/test/db';
 
 // get is a prototype method unlike getMovie, and replaces the cache lookup too
+let episodeGroupUnavailable = false;
+
+const defaultExternalGet = async (endpoint: string) => {
+  if (endpoint === '/tv/episode_group/absolute-order') {
+    if (episodeGroupUnavailable) {
+      throw new Error('not found');
+    }
+
+    return orderingGroup;
+  }
+
+  const tmdbId = Number(endpoint.replace(/^\/(movie|tv)\//, ''));
+
+  if (!tmdbId) {
+    throw new Error(`Unstubbed external endpoint: ${endpoint}`);
+  }
+
+  return {
+    id: tmdbId,
+    external_ids: {},
+    seasons: [1, 2, 3].map((season_number) => ({ season_number })),
+    // Skips getMovie's localized fallback call
+    videos: { results: [{ type: 'Trailer', key: 'trailer' }] },
+  };
+};
+
 const externalApiGetMock = mock.method(
   ExternalAPI.prototype as unknown as {
     get: (endpoint: string) => Promise<unknown>;
   },
   'get',
-  async (endpoint: string) => {
-    if (endpoint === '/tv/episode_group/absolute-order') {
-      return orderingGroup;
-    }
-
-    const tmdbId = Number(endpoint.replace(/^\/(movie|tv)\//, ''));
-
-    if (!tmdbId) {
-      throw new Error(`Unstubbed external endpoint: ${endpoint}`);
-    }
-
-    return {
-      id: tmdbId,
-      external_ids: {},
-      seasons: [1, 2, 3].map((season_number) => ({ season_number })),
-      // Skips getMovie's localized fallback call
-      videos: { results: [{ type: 'Trailer', key: 'trailer' }] },
-    };
-  }
+  defaultExternalGet
 ).mock;
 
 mock.method(MediaRequest, 'sendNotification', async () => undefined);
@@ -336,6 +345,77 @@ describe('MediaRequest.request', () => {
         },
       ]
     );
+  });
+
+  it('rejects broken orderings without creating a fallback request', async () => {
+    const requestRepository = getRepository(MediaRequest);
+    const seasonRequestRepository = getRepository(SeasonRequest);
+    const groupRepository = getRepository(OrderingGroupRequest);
+    const episodeRepository = getRepository(OrderingGroupEpisodeRequest);
+    const requester = await seedOrderingRequester(5);
+
+    await getRepository(TvOrdering).save(
+      new TvOrdering({ tmdbId: 77784, orderingId: 'absolute-order' })
+    );
+    episodeGroupUnavailable = true;
+
+    try {
+      await assert.rejects(
+        () =>
+          MediaRequest.request(
+            {
+              mediaId: 77784,
+              mediaType: MediaType.TV,
+              orderingGroups: ['group-1'],
+            },
+            requester
+          ),
+        OrderingGroupRequestError
+      );
+    } finally {
+      episodeGroupUnavailable = false;
+    }
+
+    assert.strictEqual(await requestRepository.count(), 0);
+    assert.strictEqual(await seasonRequestRepository.count(), 0);
+    assert.strictEqual(await groupRepository.count(), 0);
+    assert.strictEqual(await episodeRepository.count(), 0);
+  });
+
+  it('keeps ordering request dedupe independent by quality', async () => {
+    const requestRepository = getRepository(MediaRequest);
+    const groupRepository = getRepository(OrderingGroupRequest);
+    const episodeRepository = getRepository(OrderingGroupEpisodeRequest);
+    const requester = await seedOrderingRequester(5);
+
+    await getRepository(TvOrdering).save(
+      new TvOrdering({ tmdbId: 77785, orderingId: 'absolute-order' })
+    );
+
+    const fourKRequest = await MediaRequest.request(
+      {
+        mediaId: 77785,
+        mediaType: MediaType.TV,
+        is4k: true,
+        orderingGroups: ['group-1', 'group-2'],
+      },
+      requester
+    );
+    const standardRequest = await MediaRequest.request(
+      {
+        mediaId: 77785,
+        mediaType: MediaType.TV,
+        is4k: false,
+        orderingGroups: ['group-1', 'group-2'],
+      },
+      requester
+    );
+
+    assert.strictEqual(fourKRequest.is4k, true);
+    assert.strictEqual(standardRequest.is4k, false);
+    assert.strictEqual(await requestRepository.count(), 2);
+    assert.strictEqual(await groupRepository.count(), 4);
+    assert.strictEqual(await episodeRepository.count(), 6);
   });
 
   it('reduces ordering groups against canonical availability and active standard seasons', async () => {
