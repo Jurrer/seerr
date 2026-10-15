@@ -1260,6 +1260,18 @@ describe('DELETE /request/:requestId, deleted media status restoration', () => {
 });
 
 describe('POST /request (movie), override rules', () => {
+  it('returns 400 when ordering groups are combined with standard seasons', async () => {
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.TV,
+      mediaId: 88000,
+      seasons: [1],
+      orderingGroups: ['group-1'],
+    });
+
+    assert.strictEqual(res.status, 400);
+  });
+
   it('applies an override rule when the default Radarr server id differs from its array index', async () => {
     configureRadarr([{ id: 5, isDefault: true, is4k: false }]);
     getSettings().sonarr = [];

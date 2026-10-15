@@ -4,6 +4,8 @@ import Issue from '@server/entity/Issue';
 import IssueComment from '@server/entity/IssueComment';
 import Media from '@server/entity/Media';
 import { MediaRequest } from '@server/entity/MediaRequest';
+import OrderingGroupEpisodeRequest from '@server/entity/OrderingGroupEpisodeRequest';
+import OrderingGroupRequest from '@server/entity/OrderingGroupRequest';
 import OverrideRule from '@server/entity/OverrideRule';
 import Season from '@server/entity/Season';
 import SeasonRequest from '@server/entity/SeasonRequest';
@@ -33,6 +35,8 @@ const entities = [
   IssueComment,
   Media,
   MediaRequest,
+  OrderingGroupEpisodeRequest,
+  OrderingGroupRequest,
   OverrideRule,
   Season,
   SeasonRequest,

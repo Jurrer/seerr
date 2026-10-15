@@ -2,15 +2,24 @@ import assert from 'node:assert/strict';
 import { beforeEach, describe, it, mock } from 'node:test';
 
 import ExternalAPI from '@server/api/externalapi';
-import { MediaType } from '@server/constants/media';
+import {
+  MediaRequestStatus,
+  MediaStatus,
+  MediaType,
+} from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import {
   DuplicateMediaRequestError,
   MediaRequest,
+  NoSeasonsAvailableError,
   QuotaRestrictedError,
 } from '@server/entity/MediaRequest';
+import OrderingGroupEpisodeRequest from '@server/entity/OrderingGroupEpisodeRequest';
+import OrderingGroupRequest from '@server/entity/OrderingGroupRequest';
 import SeasonRequest from '@server/entity/SeasonRequest';
+import TvEpisode from '@server/entity/TvEpisode';
+import TvOrdering from '@server/entity/TvOrdering';
 import { User } from '@server/entity/User';
 import { Permission } from '@server/lib/permissions';
 import { setupTestDb } from '@server/test/db';
@@ -22,6 +31,10 @@ const externalApiGetMock = mock.method(
   },
   'get',
   async (endpoint: string) => {
+    if (endpoint === '/tv/episode_group/absolute-order') {
+      return orderingGroup;
+    }
+
     const tmdbId = Number(endpoint.replace(/^\/(movie|tv)\//, ''));
 
     if (!tmdbId) {
@@ -40,6 +53,50 @@ const externalApiGetMock = mock.method(
 
 mock.method(MediaRequest, 'sendNotification', async () => undefined);
 
+const orderingGroup = {
+  id: 'absolute-order',
+  name: 'Absolute Order',
+  description: 'Absolute episode order',
+  episode_count: 3,
+  group_count: 2,
+  network: null,
+  type: 2,
+  groups: [
+    {
+      id: 'group-1',
+      name: 'First Arc',
+      order: 1,
+      episodes: [
+        {
+          episode_number: 1,
+          season_number: 1,
+          order: 0,
+          name: 'First canonical episode',
+        },
+        {
+          episode_number: 2,
+          season_number: 2,
+          order: 1,
+          name: 'Second canonical episode',
+        },
+      ],
+    },
+    {
+      id: 'group-2',
+      name: 'Later Arc',
+      order: 2,
+      episodes: [
+        {
+          episode_number: 3,
+          season_number: 3,
+          order: 0,
+          name: 'Third canonical episode',
+        },
+      ],
+    },
+  ],
+};
+
 setupTestDb();
 
 beforeEach(() => {
@@ -55,6 +112,14 @@ async function seedRequester(movieQuotaLimit: number): Promise<User> {
   requester.movieQuotaLimit = movieQuotaLimit;
 
   return userRepository.save(requester);
+}
+
+async function seedOrderingRequester(tvQuotaLimit: number): Promise<User> {
+  const requester = await seedRequester(5);
+  requester.tvQuotaLimit = tvQuotaLimit;
+  requester.permissions = Permission.REQUEST | Permission.REQUEST_4K;
+
+  return getRepository(User).save(requester);
 }
 
 async function createRequester(
@@ -201,5 +266,266 @@ describe('MediaRequest.request', () => {
       }),
       1
     );
+  });
+
+  it('creates one parent request containing ordering group request rows', async () => {
+    const groupRepository = getRepository(OrderingGroupRequest);
+    const episodeRepository = getRepository(OrderingGroupEpisodeRequest);
+    const seasonRequestRepository = getRepository(SeasonRequest);
+    const requester = await seedOrderingRequester(2);
+
+    await getRepository(TvOrdering).save(
+      new TvOrdering({ tmdbId: 77777, orderingId: 'absolute-order' })
+    );
+
+    const request = await MediaRequest.request(
+      {
+        mediaId: 77777,
+        mediaType: MediaType.TV,
+        is4k: true,
+        orderingGroups: ['group-1', 'group-2'],
+        serverId: 10,
+        profileId: 20,
+        rootFolder: '/tv',
+        languageProfileId: 30,
+        tags: [1],
+      },
+      requester
+    );
+
+    assert.strictEqual(request.requestedBy.id, requester.id);
+    assert.strictEqual(request.is4k, true);
+    assert.strictEqual(request.serverId, 10);
+    assert.strictEqual(request.profileId, 20);
+    assert.strictEqual(request.rootFolder, '/tv');
+    assert.strictEqual(request.languageProfileId, 30);
+    assert.deepStrictEqual(request.tags, [1]);
+    assert.deepStrictEqual(
+      request.orderingGroups.map((group) => group.groupId),
+      ['group-1', 'group-2']
+    );
+    assert.strictEqual(request.seasons.length, 0);
+    assert.strictEqual(await groupRepository.count(), 2);
+    assert.strictEqual(await episodeRepository.count(), 3);
+    assert.strictEqual(await seasonRequestRepository.count(), 0);
+
+    const firstGroup = request.orderingGroups[0];
+    assert.strictEqual(firstGroup.orderingId, 'absolute-order');
+    assert.strictEqual(firstGroup.name, 'First Arc');
+    assert.strictEqual(firstGroup.episodeCount, 2);
+    assert.strictEqual(firstGroup.status, MediaRequestStatus.PENDING);
+    assert.deepStrictEqual(
+      firstGroup.episodes.map((episode) => ({
+        position: episode.position,
+        seasonNumber: episode.seasonNumber,
+        episodeNumber: episode.episodeNumber,
+        name: episode.name,
+      })),
+      [
+        {
+          position: 1,
+          seasonNumber: 1,
+          episodeNumber: 1,
+          name: 'First canonical episode',
+        },
+        {
+          position: 2,
+          seasonNumber: 2,
+          episodeNumber: 2,
+          name: 'Second canonical episode',
+        },
+      ]
+    );
+  });
+
+  it('reduces ordering groups against canonical availability and active standard seasons', async () => {
+    const groupRepository = getRepository(OrderingGroupRequest);
+    const episodeRepository = getRepository(OrderingGroupEpisodeRequest);
+    const requester = await seedOrderingRequester(5);
+
+    await getRepository(TvOrdering).save(
+      new TvOrdering({ tmdbId: 77778, orderingId: 'absolute-order' })
+    );
+    await getRepository(TvEpisode).save(
+      new TvEpisode({
+        tmdbId: 77778,
+        seasonNumber: 1,
+        episodeNumber: 1,
+        status4k: MediaStatus.AVAILABLE,
+      })
+    );
+    await MediaRequest.request(
+      {
+        mediaId: 77778,
+        mediaType: MediaType.TV,
+        is4k: true,
+        seasons: [2],
+      },
+      requester
+    );
+
+    const request = await MediaRequest.request(
+      {
+        mediaId: 77778,
+        mediaType: MediaType.TV,
+        is4k: true,
+        orderingGroups: ['group-1', 'group-2'],
+      },
+      requester
+    );
+
+    assert.strictEqual(request.orderingGroups.length, 1);
+    assert.strictEqual(request.orderingGroups[0].groupId, 'group-2');
+    assert.strictEqual(request.orderingGroups[0].episodeCount, 1);
+    assert.strictEqual(await groupRepository.count(), 1);
+    assert.strictEqual(await episodeRepository.count(), 1);
+  });
+
+  it('charges one season-equivalent quota unit per ordering group', async () => {
+    const requestRepository = getRepository(MediaRequest);
+    const groupRepository = getRepository(OrderingGroupRequest);
+    const requester = await seedOrderingRequester(1);
+
+    await getRepository(TvOrdering).save(
+      new TvOrdering({ tmdbId: 77779, orderingId: 'absolute-order' })
+    );
+
+    await assert.rejects(
+      () =>
+        MediaRequest.request(
+          {
+            mediaId: 77779,
+            mediaType: MediaType.TV,
+            orderingGroups: ['group-1', 'group-2'],
+          },
+          requester
+        ),
+      QuotaRestrictedError
+    );
+    assert.strictEqual(await requestRepository.count(), 0);
+    assert.strictEqual(await groupRepository.count(), 0);
+  });
+
+  it('rejects ordering groups submitted with standard seasons', async () => {
+    const requester = await seedOrderingRequester(5);
+
+    await assert.rejects(
+      () =>
+        MediaRequest.request(
+          {
+            mediaId: 77780,
+            mediaType: MediaType.TV,
+            seasons: [1],
+            orderingGroups: ['group-1'],
+          },
+          requester
+        ),
+      Error
+    );
+  });
+
+  it('keeps ordering group request no-content behavior', async () => {
+    const requester = await seedOrderingRequester(5);
+
+    await getRepository(TvOrdering).save(
+      new TvOrdering({ tmdbId: 77781, orderingId: 'absolute-order' })
+    );
+    await getRepository(TvEpisode).save([
+      new TvEpisode({
+        tmdbId: 77781,
+        seasonNumber: 1,
+        episodeNumber: 1,
+        status: MediaStatus.AVAILABLE,
+      }),
+      new TvEpisode({
+        tmdbId: 77781,
+        seasonNumber: 2,
+        episodeNumber: 2,
+        status: MediaStatus.AVAILABLE,
+      }),
+      new TvEpisode({
+        tmdbId: 77781,
+        seasonNumber: 3,
+        episodeNumber: 3,
+        status: MediaStatus.AVAILABLE,
+      }),
+    ]);
+
+    await assert.rejects(
+      () =>
+        MediaRequest.request(
+          {
+            mediaId: 77781,
+            mediaType: MediaType.TV,
+            orderingGroups: ['group-1', 'group-2'],
+          },
+          requester
+        ),
+      NoSeasonsAvailableError
+    );
+  });
+
+  it('preserves stored ordering group snapshots after upstream changes', async () => {
+    const requester = await seedOrderingRequester(5);
+
+    await getRepository(TvOrdering).save(
+      new TvOrdering({ tmdbId: 77782, orderingId: 'absolute-order' })
+    );
+
+    const request = await MediaRequest.request(
+      {
+        mediaId: 77782,
+        mediaType: MediaType.TV,
+        orderingGroups: ['group-1'],
+      },
+      requester
+    );
+
+    orderingGroup.groups[0].name = 'Rewritten upstream';
+    orderingGroup.groups[0].episodes[0].name = 'Rewritten episode';
+    orderingGroup.groups[0].episodes[0].season_number = 9;
+    orderingGroup.groups[0].episodes[0].episode_number = 9;
+
+    const stored = await getRepository(OrderingGroupRequest).findOneOrFail({
+      where: { id: request.orderingGroups[0].id },
+      relations: ['episodes'],
+    });
+
+    assert.strictEqual(stored.name, 'First Arc');
+    assert.strictEqual(stored.episodes[0].name, 'First canonical episode');
+    assert.strictEqual(stored.episodes[0].seasonNumber, 1);
+    assert.strictEqual(stored.episodes[0].episodeNumber, 1);
+  });
+
+  it('derives ordering group request status from canonical episode rows', async () => {
+    const requester = await seedOrderingRequester(5);
+
+    await getRepository(TvOrdering).save(
+      new TvOrdering({ tmdbId: 77783, orderingId: 'absolute-order' })
+    );
+
+    const request = await MediaRequest.request(
+      {
+        mediaId: 77783,
+        mediaType: MediaType.TV,
+        orderingGroups: ['group-2'],
+      },
+      requester
+    );
+
+    const episode = await getRepository(
+      OrderingGroupEpisodeRequest
+    ).findOneOrFail({
+      where: { id: request.orderingGroups[0].episodes[0].id },
+    });
+    episode.status = MediaRequestStatus.COMPLETED;
+    await getRepository(OrderingGroupEpisodeRequest).save(episode);
+
+    const stored = await getRepository(OrderingGroupRequest).findOneOrFail({
+      where: { id: request.orderingGroups[0].id },
+      relations: ['episodes'],
+    });
+
+    assert.strictEqual(stored.status, MediaRequestStatus.COMPLETED);
   });
 });

@@ -6725,6 +6725,11 @@ paths:
                         minimum: 0
                     - type: string
                       enum: [all]
+                orderingGroups:
+                  type: array
+                  items:
+                    type: string
+                  description: TMDB episode group IDs from the currently applied ordering. Mutually exclusive with seasons.
                 is4k:
                   type: boolean
                   example: false

@@ -5,6 +5,8 @@ import {
   MediaType,
 } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
+import OrderingGroupEpisodeRequest from '@server/entity/OrderingGroupEpisodeRequest';
+import OrderingGroupRequest from '@server/entity/OrderingGroupRequest';
 import type { MediaRequestBody } from '@server/interfaces/api/requestInterfaces';
 import notificationManager, { Notification } from '@server/lib/notifications';
 import overrideRules from '@server/lib/overrideRules';
@@ -33,12 +35,15 @@ import {
 } from 'typeorm';
 import Media from './Media';
 import SeasonRequest from './SeasonRequest';
+import TvEpisode from './TvEpisode';
+import TvOrdering from './TvOrdering';
 import { User } from './User';
 
 export class RequestPermissionError extends Error {}
 export class QuotaRestrictedError extends Error {}
 export class DuplicateMediaRequestError extends Error {}
 export class NoSeasonsAvailableError extends Error {}
+export class OrderingGroupRequestError extends Error {}
 export class BlocklistedMediaError extends Error {}
 
 type MediaRequestOptions = {
@@ -135,6 +140,26 @@ export class MediaRequest {
         `You do not have permission to make ${
           requestBody.is4k ? '4K ' : ''
         }series requests.`
+      );
+    }
+
+    if (
+      requestBody.mediaType === MediaType.TV &&
+      requestBody.orderingGroups &&
+      requestBody.seasons
+    ) {
+      throw new OrderingGroupRequestError(
+        'Ordering groups cannot be combined with standard season selections.'
+      );
+    }
+
+    if (
+      requestBody.mediaType === MediaType.TV &&
+      requestBody.orderingGroups &&
+      requestBody.orderingGroups.length === 0
+    ) {
+      throw new OrderingGroupRequestError(
+        'At least one ordering group is required.'
       );
     }
 
@@ -356,6 +381,188 @@ export class MediaRequest {
       const tmdbMediaShow = tmdbMedia as Awaited<
         ReturnType<typeof tmdb.getTvShow>
       >;
+
+      if (requestBody.orderingGroups) {
+        const selectedGroupIds = [...new Set(requestBody.orderingGroups)];
+
+        if (selectedGroupIds.length !== requestBody.orderingGroups.length) {
+          throw new OrderingGroupRequestError(
+            'Ordering groups must be unique.'
+          );
+        }
+
+        const appliedOrdering = await getRepository(TvOrdering).findOne({
+          where: { tmdbId: tmdbMediaShow.id },
+        });
+
+        if (!appliedOrdering) {
+          throw new OrderingGroupRequestError(
+            'No ordering is currently applied to this series.'
+          );
+        }
+
+        const ordering = await tmdb.getTvEpisodeGroup({
+          orderingId: appliedOrdering.orderingId,
+        });
+
+        if (ordering.id !== appliedOrdering.orderingId) {
+          throw new OrderingGroupRequestError(
+            'The applied ordering is no longer available.'
+          );
+        }
+
+        const selectedGroups = selectedGroupIds.map((groupId) => {
+          const group = ordering.groups.find(
+            (candidate) => candidate.id === groupId
+          );
+
+          if (!group) {
+            throw new OrderingGroupRequestError(
+              `Ordering group ${groupId} is not part of the applied ordering.`
+            );
+          }
+
+          return group;
+        });
+
+        const canonicalEpisodes = await getRepository(TvEpisode).find({
+          where: { tmdbId: tmdbMediaShow.id },
+        });
+        const availableCanonicalEpisodes = new Set(
+          canonicalEpisodes
+            .filter(
+              (episode) =>
+                episode[requestBody.is4k ? 'status4k' : 'status'] ===
+                MediaStatus.AVAILABLE
+            )
+            .map(
+              (episode) => `${episode.seasonNumber}-${episode.episodeNumber}`
+            )
+        );
+        const requestedCanonicalEpisodes = new Set<string>();
+        const selectedCanonicalEpisodes = selectedGroups.flatMap((group) =>
+          group.episodes.map((episode) => ({
+            seasonNumber: episode.season_number,
+            episodeNumber: episode.episode_number,
+            canonicalKey: `${episode.season_number}-${episode.episode_number}`,
+          }))
+        );
+        const activeRequests = (media.requests ?? []).filter(
+          (request) =>
+            request.is4k === requestBody.is4k &&
+            request.status !== MediaRequestStatus.DECLINED &&
+            request.status !== MediaRequestStatus.COMPLETED
+        );
+
+        for (const request of activeRequests) {
+          for (const season of request.seasons) {
+            for (const episode of selectedCanonicalEpisodes) {
+              if (episode.seasonNumber === season.seasonNumber) {
+                requestedCanonicalEpisodes.add(episode.canonicalKey);
+              }
+            }
+          }
+
+          for (const group of request.orderingGroups ?? []) {
+            for (const episode of group.episodes) {
+              requestedCanonicalEpisodes.add(
+                `${episode.seasonNumber}-${episode.episodeNumber}`
+              );
+            }
+          }
+        }
+
+        const finalGroups = selectedGroups
+          .map((group) => ({
+            group,
+            episodes: [...group.episodes]
+              .sort((episode, nextEpisode) => episode.order - nextEpisode.order)
+              .map((episode) => ({
+                seasonNumber: episode.season_number,
+                episodeNumber: episode.episode_number,
+                name: episode.name,
+                canonicalKey: `${episode.season_number}-${episode.episode_number}`,
+              }))
+              .filter(
+                (episode) =>
+                  !availableCanonicalEpisodes.has(episode.canonicalKey) &&
+                  !requestedCanonicalEpisodes.has(episode.canonicalKey)
+              ),
+          }))
+          .filter((group) => group.episodes.length > 0);
+
+        if (finalGroups.length === 0) {
+          throw new NoSeasonsAvailableError('No seasons available to request');
+        } else if (
+          !ignoreQuota &&
+          quotas.tv.limit &&
+          finalGroups.length > (quotas.tv.remaining ?? 0)
+        ) {
+          throw new QuotaRestrictedError('Series Quota exceeded.');
+        }
+
+        await mediaRepository.save(media);
+
+        const requestStatus = user.hasPermission(
+          [
+            requestBody.is4k
+              ? Permission.AUTO_APPROVE_4K
+              : Permission.AUTO_APPROVE,
+            requestBody.is4k
+              ? Permission.AUTO_APPROVE_4K_TV
+              : Permission.AUTO_APPROVE_TV,
+            Permission.MANAGE_REQUESTS,
+          ],
+          { type: 'or' }
+        )
+          ? MediaRequestStatus.APPROVED
+          : MediaRequestStatus.PENDING;
+
+        const request = new MediaRequest({
+          type: MediaType.TV,
+          status: requestStatus,
+          modifiedBy:
+            requestStatus === MediaRequestStatus.APPROVED ? user : undefined,
+          media,
+          requestedBy: requestUser,
+          is4k: requestBody.is4k,
+          serverId: requestBody.serverId,
+          profileId,
+          rootFolder,
+          languageProfileId: requestBody.languageProfileId,
+          tags,
+          seasons: [],
+          orderingGroups: finalGroups.map(({ group, episodes }) => {
+            const orderingGroupRequest = new OrderingGroupRequest({
+              orderingId: ordering.id,
+              groupId: group.id,
+              name: group.name,
+              episodeCount: episodes.length,
+              status: requestStatus,
+            });
+
+            orderingGroupRequest.episodes = episodes.map(
+              ({ seasonNumber, episodeNumber, name }, index) =>
+                new OrderingGroupEpisodeRequest({
+                  position: index + 1,
+                  seasonNumber,
+                  episodeNumber,
+                  name,
+                  status: requestStatus,
+                  group: orderingGroupRequest,
+                })
+            );
+
+            return orderingGroupRequest;
+          }),
+          isAutoRequest: options.isAutoRequest ?? false,
+          ignoreQuota,
+        });
+
+        await requestRepository.save(request);
+        return request;
+      }
+
       let requestedSeasons =
         requestBody.seasons === 'all'
           ? tmdbMediaShow.seasons
@@ -540,6 +747,12 @@ export class MediaRequest {
     cascade: true,
   })
   public seasons: SeasonRequest[];
+
+  @OneToMany(() => OrderingGroupRequest, (group) => group.request, {
+    eager: true,
+    cascade: true,
+  })
+  public orderingGroups: OrderingGroupRequest[];
 
   @Column({ default: false })
   public is4k: boolean;
