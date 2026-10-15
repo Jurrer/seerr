@@ -1059,17 +1059,16 @@ class AvailabilitySync {
             ) ?? [];
           seasonExistsInPlex = availableEpisodes.length > 0;
 
-          if (availableEpisodes.length > 0) {
-            await updateTvEpisodeAvailability(
-              media.tmdbId,
-              availableEpisodes.map((episode) => ({
-                tmdbId: media.tmdbId,
-                seasonNumber: season.seasonNumber,
-                episodeNumber: episode.index,
-              })),
-              is4k
-            );
-          }
+          await updateTvEpisodeAvailability(
+            media.tmdbId,
+            season.seasonNumber,
+            availableEpisodes.map((episode) => ({
+              tmdbId: media.tmdbId,
+              seasonNumber: season.seasonNumber,
+              episodeNumber: episode.index,
+            })),
+            is4k
+          );
         } catch {
           // If we can't fetch episodes, assume the season exists
           // to avoid false removal
@@ -1234,17 +1233,16 @@ class AvailabilitySync {
             });
             seasonExistsInJellyfin = availableEpisodes.length > 0;
 
-            if (availableEpisodes.length > 0) {
-              await updateTvEpisodeAvailability(
-                media.tmdbId,
-                availableEpisodes.map((episode) => ({
-                  tmdbId: media.tmdbId,
-                  seasonNumber: season.seasonNumber,
-                  episodeNumber: episode.IndexNumber ?? 0,
-                })),
-                is4k
-              );
-            }
+            await updateTvEpisodeAvailability(
+              media.tmdbId,
+              season.seasonNumber,
+              availableEpisodes.map((episode) => ({
+                tmdbId: media.tmdbId,
+                seasonNumber: season.seasonNumber,
+                episodeNumber: episode.IndexNumber ?? 0,
+              })),
+              is4k
+            );
           } catch {
             // If we can't fetch episodes, assume the season exists
             // to avoid false removal

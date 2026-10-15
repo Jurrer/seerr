@@ -174,6 +174,21 @@ describe('MediaRequestSubscriber.sendToSonarr ordering groups', () => {
       { seasonNumber: 1, episodeNumber: 1 },
       { seasonNumber: 2, episodeNumber: 2 },
     ]);
+
+    const stored = await getRepository(MediaRequest).findOneOrFail({
+      where: { id: request.id },
+      relations: { orderingGroups: { episodes: true } },
+    });
+    assert.strictEqual(request.status, MediaRequestStatus.APPROVED);
+    assert.ok(
+      stored.orderingGroups.every(
+        (group) =>
+          group.status === MediaRequestStatus.APPROVED &&
+          group.episodes.every(
+            (episode) => episode.status === MediaRequestStatus.APPROVED
+          )
+      )
+    );
   });
 
   it('marks ordering request episodes failed when Sonarr mapping is incomplete', async () => {

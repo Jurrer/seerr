@@ -213,6 +213,10 @@ describe('storedOrderingGroupRequestStates', () => {
         id: 'stored-group',
         name: 'Stored Arc',
         episodeCount: 2,
+        episodes: [
+          { seasonNumber: 1, episodeNumber: 1 },
+          { seasonNumber: 2, episodeNumber: 2 },
+        ],
         availableCount: 0,
         requestedCount: 2,
         requestableCount: 0,

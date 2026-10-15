@@ -16,6 +16,7 @@ import {
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import { MediaRequest } from '@server/entity/MediaRequest';
+import OrderingGroupEpisodeRequest from '@server/entity/OrderingGroupEpisodeRequest';
 import Season from '@server/entity/Season';
 import SeasonRequest from '@server/entity/SeasonRequest';
 import notificationManager, { Notification } from '@server/lib/notifications';
@@ -308,8 +309,23 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           });
 
           const requestRepository = manager.getRepository(MediaRequest);
+          if (entity.orderingGroups?.length) {
+            entity.orderingGroups.forEach((group) => {
+              group.status = MediaRequestStatus.COMPLETED;
+              group.episodes.forEach((episode) => {
+                episode.status = MediaRequestStatus.COMPLETED;
+              });
+            });
+          }
           entity.status = MediaRequestStatus.COMPLETED;
           await requestRepository.save(entity);
+          if (entity.orderingGroups?.length) {
+            MediaRequest.sendNotification(
+              entity,
+              media,
+              Notification.MEDIA_AVAILABLE
+            );
+          }
           return;
         }
 
@@ -765,6 +781,22 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
             media[entity.is4k ? 'serviceId4k' : 'serviceId'] =
               sonarrSettings?.id;
             await mediaRepository.save(media);
+
+            if (entity.orderingGroups?.length) {
+              const orderingEpisodeRepository = getRepository(
+                OrderingGroupEpisodeRequest
+              );
+              entity.orderingGroups.forEach((group) => {
+                group.status = MediaRequestStatus.APPROVED;
+                group.episodes.forEach((episode) => {
+                  episode.status = MediaRequestStatus.APPROVED;
+                });
+              });
+              const orderingEpisodes = entity.orderingGroups.flatMap(
+                (group) => group.episodes
+              );
+              await orderingEpisodeRepository.save(orderingEpisodes);
+            }
           })
           .catch(async () => {
             try {

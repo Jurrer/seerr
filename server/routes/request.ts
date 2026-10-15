@@ -16,6 +16,7 @@ import {
   QuotaRestrictedError,
   RequestPermissionError,
 } from '@server/entity/MediaRequest';
+import OrderingGroupEpisodeRequest from '@server/entity/OrderingGroupEpisodeRequest';
 import OrderingGroupRequest from '@server/entity/OrderingGroupRequest';
 import SeasonRequest from '@server/entity/SeasonRequest';
 import { User } from '@server/entity/User';
@@ -480,7 +481,7 @@ requestRoutes.put<{ requestId: string }>(
           where: {
             id: requestId,
           },
-          relations: { orderingGroups: true },
+          relations: { orderingGroups: { episodes: true } },
         });
 
         if (!request) {
@@ -562,6 +563,13 @@ requestRoutes.put<{ requestId: string }>(
 
             if (request.orderingGroups.length > 0) {
               const requestedOrderingGroups = req.body.orderingGroups;
+              const requestedOrderingEpisodes = req.body.orderingEpisodes as
+                | {
+                    groupId: string;
+                    seasonNumber: number;
+                    episodeNumber: number;
+                  }[]
+                | undefined;
 
               if (
                 !Array.isArray(requestedOrderingGroups) ||
@@ -579,18 +587,102 @@ requestRoutes.put<{ requestId: string }>(
                 });
               }
 
+              if (
+                requestedOrderingEpisodes &&
+                (!Array.isArray(requestedOrderingEpisodes) ||
+                  requestedOrderingEpisodes.some(
+                    (episode) =>
+                      !requestedOrderingGroups.includes(episode.groupId) ||
+                      !request.orderingGroups.some(
+                        (group) =>
+                          group.groupId === episode.groupId &&
+                          group.episodes.some(
+                            (storedEpisode) =>
+                              storedEpisode.seasonNumber ===
+                                episode.seasonNumber &&
+                              storedEpisode.episodeNumber ===
+                                episode.episodeNumber
+                          )
+                      )
+                  ))
+              ) {
+                return next({
+                  status: 400,
+                  message:
+                    'Ordering episodes cannot be added to an existing request. Request them separately instead.',
+                });
+              }
+
+              const selectedEpisodeKeys = requestedOrderingEpisodes?.map(
+                (episode) =>
+                  `${episode.groupId}-${episode.seasonNumber}-${episode.episodeNumber}`
+              );
               const keptOrderingGroups = request.orderingGroups.filter(
-                (group) => requestedOrderingGroups.includes(group.groupId)
+                (group) =>
+                  requestedOrderingGroups.includes(group.groupId) &&
+                  (!selectedEpisodeKeys ||
+                    selectedEpisodeKeys.some((key) =>
+                      key.startsWith(`${group.groupId}-`)
+                    ))
               );
               const removedOrderingGroups = request.orderingGroups.filter(
-                (group) => !requestedOrderingGroups.includes(group.groupId)
+                (group) => !keptOrderingGroups.includes(group)
               );
+
+              if (ownerChanging && !request.ignoreQuota) {
+                const quotas = await requestUser.getQuota();
+
+                if (
+                  quotas.tv.restricted ||
+                  (quotas.tv.limit &&
+                    keptOrderingGroups.length > (quotas.tv.remaining ?? 0))
+                ) {
+                  return next({
+                    status: 403,
+                    message: 'Series Quota exceeded.',
+                  });
+                }
+              }
+
+              const episodeRepository = getRepository(
+                OrderingGroupEpisodeRequest
+              );
+              const removedEpisodes = selectedEpisodeKeys
+                ? keptOrderingGroups.flatMap((group) =>
+                    group.episodes.filter(
+                      (episode) =>
+                        !selectedEpisodeKeys.includes(
+                          `${group.groupId}-${episode.seasonNumber}-${episode.episodeNumber}`
+                        )
+                    )
+                  )
+                : [];
+
+              for (const group of keptOrderingGroups) {
+                group.episodes = selectedEpisodeKeys
+                  ? group.episodes.filter((episode) =>
+                      selectedEpisodeKeys.includes(
+                        `${group.groupId}-${episode.seasonNumber}-${episode.episodeNumber}`
+                      )
+                    )
+                  : group.episodes;
+                group.episodeCount = group.episodes.length;
+              }
+
               request.orderingGroups = keptOrderingGroups;
 
               if (removedOrderingGroups.length > 0) {
                 await getRepository(OrderingGroupRequest).remove(
                   removedOrderingGroups
                 );
+              }
+
+              if (removedEpisodes.length > 0) {
+                await episodeRepository.remove(removedEpisodes);
+              }
+
+              for (const group of keptOrderingGroups) {
+                await getRepository(OrderingGroupRequest).save(group);
               }
 
               if (request.orderingGroups.length === 0) {

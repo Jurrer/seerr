@@ -220,6 +220,12 @@ class SonarrAPI extends ServarrBase<{
       // If the series already exists, we will simply just update it
       if (series.id) {
         let exactEpisodeIds: number[] | undefined;
+        const originalSeasons = series.seasons.map((season) => ({
+          seasonNumber: season.seasonNumber,
+          monitored: season.monitored,
+        }));
+        const originalMonitored = series.monitored;
+        const originalTags = series.tags;
 
         if (options.episodes) {
           const sonarrEpisodes = await this.getEpisodes(series.id);
@@ -268,7 +274,16 @@ class SonarrAPI extends ServarrBase<{
                 seriesId: newSeriesResponse.data.id,
                 episodeCount: exactEpisodeIds.length,
               });
-              await this.monitorEpisodes(exactEpisodeIds);
+
+              try {
+                await this.monitorEpisodes(exactEpisodeIds);
+              } catch (e) {
+                series.seasons = originalSeasons;
+                series.monitored = originalMonitored;
+                series.tags = originalTags;
+                await this.axios.put<SonarrSeries>('/series', series);
+                throw e;
+              }
             }
           } else {
             try {

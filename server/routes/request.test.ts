@@ -628,6 +628,95 @@ describe('PUT /request/:requestId (ordering groups)', () => {
     );
   });
 
+  it('enforces the new owner quota when reassigning an ordering request', async () => {
+    const owner = await seedUser('admin@seerr.dev');
+    const targetOwner = await seedUser('demo@seerr.dev', {
+      tvQuotaLimit: 1,
+    });
+    const mediaRequest = await seedOrderingTvRequest(owner);
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.TV,
+      userId: targetOwner.id,
+      orderingGroups: ['group-1', 'group-2'],
+    });
+
+    assert.strictEqual(res.status, 403);
+    assert.match(res.body.message, /Series Quota exceeded/i);
+    const saved = await getRepository(MediaRequest).findOneOrFail({
+      where: { id: mediaRequest.id },
+      relations: { requestedBy: true },
+    });
+    assert.strictEqual(saved.requestedBy.id, owner.id);
+  });
+
+  it('removes individual stored episodes without rewriting the remaining snapshot', async () => {
+    const groupRepository = getRepository(OrderingGroupRequest);
+    const episodeRepository = getRepository(OrderingGroupEpisodeRequest);
+    const owner = await seedUser('admin@seerr.dev');
+    const mediaRequest = await seedOrderingTvRequest(owner);
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.TV,
+      orderingGroups: ['group-1', 'group-2'],
+      orderingEpisodes: [
+        { groupId: 'group-1', seasonNumber: 1, episodeNumber: 1 },
+        { groupId: 'group-2', seasonNumber: 3, episodeNumber: 3 },
+      ],
+    });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(await groupRepository.count(), 2);
+    assert.strictEqual(await episodeRepository.count(), 2);
+
+    const saved = await getRepository(MediaRequest).findOneOrFail({
+      where: { id: mediaRequest.id },
+      relations: { orderingGroups: { episodes: true } },
+    });
+    const firstGroup = saved.orderingGroups.find(
+      (group) => group.groupId === 'group-1'
+    );
+    assert.ok(firstGroup);
+    assert.strictEqual(firstGroup.episodeCount, 1);
+    assert.deepStrictEqual(
+      firstGroup.episodes.map((episode) => episode.episodeNumber),
+      [1]
+    );
+    assert.ok(
+      !(await episodeRepository.exist({
+        where: {
+          seasonNumber: 2,
+          episodeNumber: 2,
+        },
+      }))
+    );
+  });
+
+  it('deletes the parent request when every stored episode is removed', async () => {
+    const requestRepository = getRepository(MediaRequest);
+    const groupRepository = getRepository(OrderingGroupRequest);
+    const episodeRepository = getRepository(OrderingGroupEpisodeRequest);
+    const owner = await seedUser('admin@seerr.dev');
+    const mediaRequest = await seedOrderingTvRequest(owner);
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.TV,
+      orderingGroups: ['group-1', 'group-2'],
+      orderingEpisodes: [],
+    });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(await groupRepository.count(), 0);
+    assert.strictEqual(await episodeRepository.count(), 0);
+    assert.strictEqual(
+      await requestRepository.count({ where: { id: mediaRequest.id } }),
+      0
+    );
+  });
+
   it('rejects additions to a historical ordering request', async () => {
     const groupRepository = getRepository(OrderingGroupRequest);
     const owner = await seedUser('admin@seerr.dev');

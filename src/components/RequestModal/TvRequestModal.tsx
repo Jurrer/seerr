@@ -19,6 +19,7 @@ import { MediaRequestStatus, MediaStatus } from '@server/constants/media';
 import type { MediaRequest } from '@server/entity/MediaRequest';
 import type SeasonRequest from '@server/entity/SeasonRequest';
 import type { NonFunctionProperties } from '@server/interfaces/api/common';
+import type { OrderingEpisodeSelection } from '@server/interfaces/api/requestInterfaces';
 import type { QuotaResponse } from '@server/interfaces/api/userInterfaces';
 import { Permission } from '@server/lib/permissions';
 import type { TvDetails, TvOrdering } from '@server/models/Tv';
@@ -91,6 +92,15 @@ const TvRequestModal = ({
   const editingOrderingGroups: string[] = (
     editRequest?.orderingGroups ?? []
   ).map((group) => group.groupId);
+  const editingOrderingEpisodes: OrderingEpisodeSelection[] = (
+    editRequest?.orderingGroups ?? []
+  ).flatMap((group) =>
+    group.episodes.map((episode) => ({
+      groupId: group.groupId,
+      seasonNumber: episode.seasonNumber,
+      episodeNumber: episode.episodeNumber,
+    }))
+  );
   const { data, error } = useSWR<TvDetails>(`/api/v1/tv/${tmdbId}`);
   const [requestOverrides, setRequestOverrides] =
     useState<RequestOverrides | null>(null);
@@ -100,6 +110,9 @@ const TvRequestModal = ({
   const [selectedOrderingGroups, setSelectedOrderingGroups] = useState<
     string[]
   >(editRequest ? editingOrderingGroups : []);
+  const [selectedOrderingEpisodes, setSelectedOrderingEpisodes] = useState<
+    OrderingEpisodeSelection[]
+  >(editRequest ? editingOrderingEpisodes : []);
   const intl = useIntl();
   const { user, hasPermission } = useUser();
   const [searchModal, setSearchModal] = useState<{
@@ -150,7 +163,9 @@ const TvRequestModal = ({
       !appliedOrdering) ||
     appliedOrderingError;
   const selectedRequestCount = isOrderingRequest
-    ? selectedOrderingGroups.length
+    ? isEditingOrderingRequest
+      ? selectedOrderingEpisodes.length
+      : selectedOrderingGroups.length
     : selectedSeasons.length;
   const currentlyRemaining =
     (quota?.tv.remaining ?? 0) -
@@ -171,7 +186,7 @@ const TvRequestModal = ({
 
     try {
       if (isEditingOrderingRequest) {
-        if (selectedOrderingGroups.length > 0) {
+        if (selectedOrderingEpisodes.length > 0) {
           await axios.put(`/api/v1/request/${editRequest.id}`, {
             mediaType: 'tv',
             serverId: requestOverrides?.server,
@@ -180,7 +195,8 @@ const TvRequestModal = ({
             languageProfileId: requestOverrides?.language,
             userId: requestOverrides?.user?.id,
             tags: requestOverrides?.tags,
-            orderingGroups: selectedOrderingGroups,
+            orderingGroups: editingOrderingGroups,
+            orderingEpisodes: selectedOrderingEpisodes,
           });
 
           if (alsoApproveRequest) {
@@ -374,6 +390,18 @@ const TvRequestModal = ({
   const isSelectedOrderingGroup = (groupId: string): boolean =>
     selectedOrderingGroups.includes(groupId);
 
+  const isSelectedOrderingEpisode = (
+    groupId: string,
+    seasonNumber: number,
+    episodeNumber: number
+  ): boolean =>
+    selectedOrderingEpisodes.some(
+      (episode) =>
+        episode.groupId === groupId &&
+        episode.seasonNumber === seasonNumber &&
+        episode.episodeNumber === episodeNumber
+    );
+
   const toggleOrderingGroup = (groupId: string): void => {
     const isSelectable =
       (isEditingOrderingRequest && editingOrderingGroups.includes(groupId)) ||
@@ -392,11 +420,64 @@ const TvRequestModal = ({
       return;
     }
 
+    const isGroupSelected = selectedOrderingGroups.includes(groupId);
+
     setSelectedOrderingGroups((groups) =>
-      groups.includes(groupId)
+      isGroupSelected
         ? groups.filter((group) => group !== groupId)
         : [...groups, groupId]
     );
+
+    if (isEditingOrderingRequest) {
+      setSelectedOrderingEpisodes((episodes) =>
+        isGroupSelected
+          ? episodes.filter((episode) => episode.groupId !== groupId)
+          : [
+              ...episodes,
+              ...editingOrderingEpisodes.filter(
+                (episode) => episode.groupId === groupId
+              ),
+            ]
+      );
+    }
+  };
+
+  const toggleOrderingEpisode = (
+    groupId: string,
+    seasonNumber: number,
+    episodeNumber: number
+  ): void => {
+    if (
+      !isEditingOrderingRequest ||
+      !editingOrderingEpisodes.some(
+        (episode) =>
+          episode.groupId === groupId &&
+          episode.seasonNumber === seasonNumber &&
+          episode.episodeNumber === episodeNumber
+      )
+    ) {
+      return;
+    }
+
+    const nextEpisodes = isSelectedOrderingEpisode(
+      groupId,
+      seasonNumber,
+      episodeNumber
+    )
+      ? selectedOrderingEpisodes.filter(
+          (episode) =>
+            !(
+              episode.groupId === groupId &&
+              episode.seasonNumber === seasonNumber &&
+              episode.episodeNumber === episodeNumber
+            )
+        )
+      : [...selectedOrderingEpisodes, { groupId, seasonNumber, episodeNumber }];
+
+    setSelectedOrderingEpisodes(nextEpisodes);
+    setSelectedOrderingGroups([
+      ...new Set(nextEpisodes.map((episode) => episode.groupId)),
+    ]);
   };
 
   const toggleSeason = (seasonNumber: number): void => {
@@ -429,10 +510,12 @@ const TvRequestModal = ({
 
   const toggleAllOrderingGroups = (): void => {
     if (isEditingOrderingRequest) {
-      if (selectedOrderingGroups.length < editingOrderingGroups.length) {
+      if (selectedOrderingEpisodes.length < editingOrderingEpisodes.length) {
         setSelectedOrderingGroups(editingOrderingGroups);
+        setSelectedOrderingEpisodes(editingOrderingEpisodes);
       } else {
         setSelectedOrderingGroups([]);
+        setSelectedOrderingEpisodes([]);
       }
       return;
     }
@@ -487,11 +570,11 @@ const TvRequestModal = ({
   };
 
   const isAllOrderingGroups = (): boolean =>
-    selectedOrderingGroups.length > 0 &&
-    selectedOrderingGroups.length ===
-      (isEditingOrderingRequest
-        ? editingOrderingGroups.length
-        : unrequestedOrderingGroups.length);
+    isEditingOrderingRequest
+      ? selectedOrderingEpisodes.length > 0 &&
+        selectedOrderingEpisodes.length === editingOrderingEpisodes.length
+      : selectedOrderingGroups.length > 0 &&
+        selectedOrderingGroups.length === unrequestedOrderingGroups.length;
 
   const getSeasonRequest = (
     seasonNumber: number
@@ -537,7 +620,7 @@ const TvRequestModal = ({
   const isOverQuota =
     !!quota?.tv.limit && unrequestedCount > (quota?.tv.remaining ?? 0);
   const selectedEditRequestCount = isEditingOrderingRequest
-    ? selectedOrderingGroups.length
+    ? selectedOrderingEpisodes.length
     : selectedSeasons.length;
 
   return data && !error && !data.externalIds.tvdbId && searchModal.show ? (
@@ -801,9 +884,48 @@ const TvRequestModal = ({
                         </td>
                         <td className="whitespace-nowrap px-1 py-4 text-sm font-medium leading-5 text-gray-100 md:px-6">
                           {group.name}
+                          {isEditingOrderingRequest && (
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {group.episodes.map((episode) => {
+                                const episodeKey = `S${episode.seasonNumber}E${episode.episodeNumber}`;
+                                const isSelected = isSelectedOrderingEpisode(
+                                  group.id,
+                                  episode.seasonNumber,
+                                  episode.episodeNumber
+                                );
+
+                                return (
+                                  <button
+                                    key={`${group.id}-${episode.seasonNumber}-${episode.episodeNumber}`}
+                                    type="button"
+                                    role="checkbox"
+                                    aria-checked={isSelected}
+                                    onClick={() =>
+                                      toggleOrderingEpisode(
+                                        group.id,
+                                        episode.seasonNumber,
+                                        episode.episodeNumber
+                                      )
+                                    }
+                                    className={`rounded border px-2 py-1 text-xs font-normal ${
+                                      isSelected
+                                        ? 'border-indigo-500 bg-indigo-500/20 text-indigo-200'
+                                        : 'border-gray-600 bg-gray-800/50 text-gray-300'
+                                    }`}
+                                  >
+                                    {episodeKey}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
                         </td>
                         <td className="whitespace-nowrap px-5 py-4 text-sm leading-5 text-gray-200 md:px-6">
-                          {group.episodeCount}
+                          {isEditingOrderingRequest
+                            ? selectedOrderingEpisodes.filter(
+                                (episode) => episode.groupId === group.id
+                              ).length
+                            : group.episodeCount}
                         </td>
                         <td className="whitespace-nowrap py-4 pr-2 text-sm leading-5 text-gray-200 md:px-6">
                           <Badge

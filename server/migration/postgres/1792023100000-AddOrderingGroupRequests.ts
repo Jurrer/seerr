@@ -5,7 +5,7 @@ export class AddOrderingGroupRequests1792023100000 implements MigrationInterface
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(
-      `CREATE TABLE "ordering_group_request" ("id" SERIAL NOT NULL, "orderingId" varchar(64) NOT NULL, "groupId" varchar(64) NOT NULL, "name" varchar, "episodeCount" integer NOT NULL DEFAULT 0, "status" integer NOT NULL DEFAULT 1, "requestId" integer, "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP NOT NULL, CONSTRAINT "PK_ordering_group_request_id" PRIMARY KEY ("id"), CONSTRAINT "UQ_ordering_group_request_identity" UNIQUE ("requestId", "groupId"))`
+      `CREATE TABLE "ordering_group_request" ("id" SERIAL NOT NULL, "orderingId" varchar(64) NOT NULL, "groupId" varchar(64) NOT NULL, "name" varchar, "episodeCount" integer NOT NULL DEFAULT 0, "status" integer NOT NULL DEFAULT 1, "requestId" integer, "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "PK_ordering_group_request_id" PRIMARY KEY ("id"), CONSTRAINT "UQ_ordering_group_request_identity" UNIQUE ("requestId", "groupId"))`
     );
     await queryRunner.query(
       `CREATE INDEX "IDX_ordering_group_request_orderingId" ON "ordering_group_request" ("orderingId")`
@@ -14,7 +14,7 @@ export class AddOrderingGroupRequests1792023100000 implements MigrationInterface
       `CREATE INDEX "IDX_ordering_group_request_requestId" ON "ordering_group_request" ("requestId")`
     );
     await queryRunner.query(
-      `CREATE TABLE "ordering_group_episode_request" ("id" SERIAL NOT NULL, "position" integer NOT NULL, "seasonNumber" integer NOT NULL, "episodeNumber" integer NOT NULL, "name" varchar, "status" integer NOT NULL DEFAULT 1, "groupId" integer, "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP NOT NULL, CONSTRAINT "PK_ordering_group_episode_request_id" PRIMARY KEY ("id"), CONSTRAINT "UQ_ordering_group_episode_canonical_identity" UNIQUE ("groupId", "seasonNumber", "episodeNumber"))`
+      `CREATE TABLE "ordering_group_episode_request" ("id" SERIAL NOT NULL, "position" integer NOT NULL, "seasonNumber" integer NOT NULL, "episodeNumber" integer NOT NULL, "name" varchar, "status" integer NOT NULL DEFAULT 1, "groupId" integer, "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "PK_ordering_group_episode_request_id" PRIMARY KEY ("id"), CONSTRAINT "UQ_ordering_group_episode_canonical_identity" UNIQUE ("groupId", "seasonNumber", "episodeNumber"))`
     );
     await queryRunner.query(
       `CREATE INDEX "IDX_ordering_group_episode_request_groupId" ON "ordering_group_episode_request" ("groupId")`

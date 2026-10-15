@@ -19,6 +19,7 @@ export type MediaRequestBody = {
   tvdbId?: number;
   seasons?: number[] | 'all';
   orderingGroups?: string[];
+  orderingEpisodes?: OrderingEpisodeSelection[];
   is4k?: boolean;
   serverId?: number;
   profileId?: number;
@@ -29,3 +30,9 @@ export type MediaRequestBody = {
   tags?: number[];
   ignoreQuota?: boolean;
 };
+
+export interface OrderingEpisodeSelection {
+  groupId: string;
+  seasonNumber: number;
+  episodeNumber: number;
+}

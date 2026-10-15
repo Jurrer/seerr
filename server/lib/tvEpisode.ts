@@ -2,6 +2,7 @@ import type { TmdbTvEpisodeGroupDetails } from '@server/api/themoviedb/interface
 import { MediaStatus } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import TvEpisode from '@server/entity/TvEpisode';
+import { completeOrderingRequests } from '@server/lib/orderingRequest';
 
 type CanonicalEpisode = Pick<
   TvEpisode,
@@ -60,8 +61,9 @@ export const seedOrderingEpisodes = async (
   return seedTvEpisodes(tmdbId, canonicalEpisodes);
 };
 
-export const updateTvEpisodeAvailability = async (
+export const syncTvEpisodeAvailability = async (
   tmdbId: number,
+  seasonNumber: number,
   canonicalEpisodes: CanonicalEpisode[],
   is4k: boolean
 ): Promise<void> => {
@@ -73,21 +75,44 @@ export const updateTvEpisodeAvailability = async (
       episode,
     ])
   );
-  const changedEpisodes = canonicalEpisodes.map((canonicalEpisode) => {
-    const key = `${canonicalEpisode.seasonNumber}-${canonicalEpisode.episodeNumber}`;
-    const episode =
-      existingByCanonicalKey.get(key) ??
-      new TvEpisode({
-        tmdbId,
-        seasonNumber: canonicalEpisode.seasonNumber,
-        episodeNumber: canonicalEpisode.episodeNumber,
-      });
+  const canonicalKeys = new Set(
+    canonicalEpisodes.map(
+      (episode) => `${episode.seasonNumber}-${episode.episodeNumber}`
+    )
+  );
+  const changedEpisodes = existingEpisodes
+    .filter((episode) => episode.seasonNumber === seasonNumber)
+    .map((episode) => {
+      const key = `${episode.seasonNumber}-${episode.episodeNumber}`;
 
+      episode[is4k ? 'status4k' : 'status'] = canonicalKeys.has(key)
+        ? MediaStatus.AVAILABLE
+        : MediaStatus.UNKNOWN;
+      return episode;
+    });
+
+  for (const canonicalEpisode of canonicalEpisodes) {
+    const key = `${canonicalEpisode.seasonNumber}-${canonicalEpisode.episodeNumber}`;
+    if (existingByCanonicalKey.has(key)) {
+      continue;
+    }
+
+    const episode = new TvEpisode({ ...canonicalEpisode, tmdbId });
     episode[is4k ? 'status4k' : 'status'] = MediaStatus.AVAILABLE;
-    return episode;
-  });
+    changedEpisodes.push(episode);
+  }
 
   if (changedEpisodes.length > 0) {
     await repository.save(changedEpisodes);
   }
+
+  await completeOrderingRequests(tmdbId, canonicalEpisodes, is4k);
 };
+
+export const updateTvEpisodeAvailability = async (
+  tmdbId: number,
+  seasonNumber: number,
+  canonicalEpisodes: CanonicalEpisode[],
+  is4k: boolean
+): Promise<void> =>
+  syncTvEpisodeAvailability(tmdbId, seasonNumber, canonicalEpisodes, is4k);

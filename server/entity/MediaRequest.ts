@@ -12,6 +12,7 @@ import notificationManager, { Notification } from '@server/lib/notifications';
 import overrideRules from '@server/lib/overrideRules';
 import { Permission } from '@server/lib/permissions';
 import { getSettings } from '@server/lib/settings';
+import { seedOrderingEpisodes } from '@server/lib/tvEpisode';
 import logger from '@server/logger';
 import { DbAwareColumn, resolveDbType } from '@server/utils/DbColumnHelper';
 import requestLock, {
@@ -35,7 +36,6 @@ import {
 } from 'typeorm';
 import Media from './Media';
 import SeasonRequest from './SeasonRequest';
-import TvEpisode from './TvEpisode';
 import TvOrdering from './TvOrdering';
 import { User } from './User';
 
@@ -432,11 +432,12 @@ export class MediaRequest {
           return group;
         });
 
-        const canonicalEpisodes = await getRepository(TvEpisode).find({
-          where: { tmdbId: tmdbMediaShow.id },
-        });
+        const seededCanonicalEpisodes = await seedOrderingEpisodes(
+          tmdbMediaShow.id,
+          ordering
+        );
         const availableCanonicalEpisodes = new Set(
-          canonicalEpisodes
+          seededCanonicalEpisodes
             .filter(
               (episode) =>
                 episode[requestBody.is4k ? 'status4k' : 'status'] ===

@@ -280,6 +280,7 @@ describe('MediaRequest.request', () => {
   it('creates one parent request containing ordering group request rows', async () => {
     const groupRepository = getRepository(OrderingGroupRequest);
     const episodeRepository = getRepository(OrderingGroupEpisodeRequest);
+    const tvEpisodeRepository = getRepository(TvEpisode);
     const seasonRequestRepository = getRepository(SeasonRequest);
     const requester = await seedOrderingRequester(2);
 
@@ -317,6 +318,10 @@ describe('MediaRequest.request', () => {
     assert.strictEqual(await groupRepository.count(), 2);
     assert.strictEqual(await episodeRepository.count(), 3);
     assert.strictEqual(await seasonRequestRepository.count(), 0);
+    assert.strictEqual(
+      await tvEpisodeRepository.count({ where: { tmdbId: 77777 } }),
+      3
+    );
 
     const firstGroup = request.orderingGroups[0];
     assert.strictEqual(firstGroup.orderingId, 'absolute-order');

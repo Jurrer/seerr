@@ -33,6 +33,7 @@ export interface OrderingGroupRequestState {
   id: string;
   name: string;
   episodeCount: number;
+  episodes: OrderingRequestEpisode[];
   availableCount: number;
   requestedCount: number;
   requestableCount: number;
@@ -101,6 +102,11 @@ export const orderingGroupRequestStates = (
       id: group.id,
       name: group.name ?? group.id,
       episodeCount: group.episodes.length,
+      episodes: group.episodes.map((episode) => ({
+        seasonNumber: episode.canonicalSeasonNumber,
+        episodeNumber: episode.canonicalEpisodeNumber,
+        name: episode.name,
+      })),
       availableCount: availableEpisodes.length,
       requestedCount: requestedEpisodes.length,
       requestableCount: requestableEpisodes.length,
@@ -124,6 +130,7 @@ export const storedOrderingGroupRequestStates = (
     id: group.groupId,
     name: group.name ?? group.groupId,
     episodeCount: group.episodeCount,
+    episodes: group.episodes,
     availableCount: 0,
     requestedCount: group.episodes.length,
     requestableCount: 0,
