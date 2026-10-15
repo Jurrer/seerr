@@ -21,6 +21,15 @@ import tvRoutes from './tv';
 const TV_ID = 42;
 const ORDERING_ID = '5f0c1a2b3c4d5e6f7a8b9c0d';
 const OTHER_ORDERING_ID = '0f1e2d3c4b5a69788796a5b4c3d2e1f0';
+const orderingResult = {
+  id: ORDERING_ID,
+  name: 'Absolute Order',
+  description: 'Absolute episode order',
+  episode_count: 24,
+  group_count: 1,
+  network: null,
+  type: 2,
+};
 
 const tvShow = {
   id: TV_ID,
@@ -214,13 +223,8 @@ beforeEach(() => {
   getEpisodeGroups = async ({ tvId }) => ({
     results: [
       {
+        ...orderingResult,
         id: tvId === TV_ID ? ORDERING_ID : OTHER_ORDERING_ID,
-        name: 'Absolute Order',
-        description: 'Absolute episode order',
-        episode_count: 24,
-        group_count: 1,
-        network: null,
-        type: 2,
       },
     ],
   });
@@ -230,27 +234,34 @@ beforeEach(() => {
 describe('GET /tv/:id/orderings', () => {
   it('lists the default ordering and TMDB orderings for a viewer', async () => {
     await seedOrdering(TV_ID, ORDERING_ID);
-    const agent = await loginAs('demo@seerr.dev');
-    const res = await agent.get(`/tv/${TV_ID}/orderings`);
-    assert.strictEqual(res.status, 200);
-    assert.deepStrictEqual(res.body, [
-      {
-        id: 'default',
-        name: 'Seasons',
-        episodeCount: 0,
-        groupCount: 1,
-        isApplied: false,
-      },
-      {
-        id: ORDERING_ID,
-        name: 'Absolute Order',
-        description: 'Absolute episode order',
-        episodeCount: 24,
-        groupCount: 1,
-        type: 'absolute',
-        isApplied: true,
-      },
-    ]);
+    tvShow.episode_groups = { results: [orderingResult] };
+    getEpisodeGroups = async () => ({ results: [] });
+
+    try {
+      const agent = await loginAs('demo@seerr.dev');
+      const res = await agent.get(`/tv/${TV_ID}/orderings`);
+      assert.strictEqual(res.status, 200);
+      assert.deepStrictEqual(res.body, [
+        {
+          id: 'default',
+          name: 'Seasons',
+          episodeCount: 0,
+          groupCount: 1,
+          isApplied: false,
+        },
+        {
+          id: ORDERING_ID,
+          name: 'Absolute Order',
+          description: 'Absolute episode order',
+          episodeCount: 24,
+          groupCount: 1,
+          type: 'absolute',
+          isApplied: true,
+        },
+      ]);
+    } finally {
+      delete tvShow.episode_groups;
+    }
   });
 });
 
@@ -262,17 +273,23 @@ describe('PUT /tv/:id/ordering', () => {
     });
     user.permissions = Permission.MANAGE_SETTINGS;
     await userRepository.save(user);
+    tvShow.episode_groups = { results: [orderingResult] };
+    getEpisodeGroups = async () => ({ results: [] });
 
-    const agent = await loginAs('demo@seerr.dev');
-    const res = await agent
-      .put(`/tv/${TV_ID}/ordering`)
-      .send({ orderingId: ORDERING_ID });
+    try {
+      const agent = await loginAs('demo@seerr.dev');
+      const res = await agent
+        .put(`/tv/${TV_ID}/ordering`)
+        .send({ orderingId: ORDERING_ID });
 
-    assert.strictEqual(res.status, 204);
-    const ordering = await getRepository(TvOrdering).findOneOrFail({
-      where: { tmdbId: TV_ID },
-    });
-    assert.strictEqual(ordering.orderingId, ORDERING_ID);
+      assert.strictEqual(res.status, 204);
+      const ordering = await getRepository(TvOrdering).findOneOrFail({
+        where: { tmdbId: TV_ID },
+      });
+      assert.strictEqual(ordering.orderingId, ORDERING_ID);
+    } finally {
+      delete tvShow.episode_groups;
+    }
   });
 
   it('clears the applied ordering with default', async () => {
@@ -535,19 +552,26 @@ describe('GET /tv/:id', () => {
 
   it('includes the currently applied ordering', async () => {
     await seedOrdering(TV_ID, ORDERING_ID);
-    const agent = await loginAs('demo@seerr.dev');
-    const res = await agent.get(`/tv/${TV_ID}`);
+    tvShow.episode_groups = { results: [orderingResult] };
+    getEpisodeGroups = async () => ({ results: [] });
 
-    assert.strictEqual(res.status, 200);
-    assert.deepStrictEqual(res.body.currentOrdering, {
-      id: ORDERING_ID,
-      name: 'Absolute Order',
-      description: 'Absolute episode order',
-      episodeCount: 24,
-      groupCount: 1,
-      type: 'absolute',
-      isApplied: true,
-    });
+    try {
+      const agent = await loginAs('demo@seerr.dev');
+      const res = await agent.get(`/tv/${TV_ID}`);
+
+      assert.strictEqual(res.status, 200);
+      assert.deepStrictEqual(res.body.currentOrdering, {
+        id: ORDERING_ID,
+        name: 'Absolute Order',
+        description: 'Absolute episode order',
+        episodeCount: 24,
+        groupCount: 1,
+        type: 'absolute',
+        isApplied: true,
+      });
+    } finally {
+      delete tvShow.episode_groups;
+    }
   });
 
   it('reports a broken applied ordering while still returning details', async () => {

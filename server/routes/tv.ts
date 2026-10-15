@@ -2,7 +2,11 @@ import { getMetadataProvider } from '@server/api/metadata';
 import RottenTomatoes from '@server/api/rating/rottentomatoes';
 import TheMovieDb from '@server/api/themoviedb';
 import { ANIME_KEYWORD_ID } from '@server/api/themoviedb/constants';
-import type { TmdbKeyword } from '@server/api/themoviedb/interfaces';
+import type {
+  TmdbKeyword,
+  TmdbTvDetails,
+  TmdbTvEpisodeGroupResult,
+} from '@server/api/themoviedb/interfaces';
 import { MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
@@ -64,6 +68,12 @@ function getLanguage(req: Request) {
   return (req.query.language as string) ?? req.locale ?? 'en';
 }
 
+function resolveEpisodeGroups(
+  episodeGroups: TmdbTvDetails['episode_groups']
+): TmdbTvEpisodeGroupResult[] | undefined {
+  return Array.isArray(episodeGroups) ? episodeGroups : episodeGroups?.results;
+}
+
 tvRoutes.get('/:id', async (req, res, next) => {
   const tmdb = new TheMovieDb();
 
@@ -97,7 +107,7 @@ tvRoutes.get('/:id', async (req, res, next) => {
     if (appliedOrdering) {
       try {
         const groups =
-          tmdbTv.episode_groups ??
+          resolveEpisodeGroups(tmdbTv.episode_groups) ??
           (await tmdb.getTvEpisodeGroups({ tvId: tv.id })).results;
         const group = groups.find(
           (candidate) => candidate.id === appliedOrdering.orderingId
@@ -154,7 +164,7 @@ tvRoutes.get('/:id/orderings', async (req, res, next) => {
       language: getLanguage(req),
     });
     const groups =
-      show.episode_groups ??
+      resolveEpisodeGroups(show.episode_groups) ??
       (await tmdb.getTvEpisodeGroups({ tvId, language: getLanguage(req) }))
         .results;
     const appliedOrdering = await getAppliedOrdering(tvId);
@@ -230,7 +240,7 @@ tvRoutes.put(
       const tmdb = new TheMovieDb();
       const show = await tmdb.getTvShow({ tvId });
       const groups =
-        show.episode_groups ??
+        resolveEpisodeGroups(show.episode_groups) ??
         (await tmdb.getTvEpisodeGroups({ tvId })).results;
       const group = groups.find((candidate) => candidate.id === orderingId);
 
