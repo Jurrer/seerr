@@ -3,6 +3,8 @@ import type {
   TmdbNetwork,
   TmdbSeasonWithEpisodes,
   TmdbTvDetails,
+  TmdbTvEpisodeGroupDetails,
+  TmdbTvEpisodeGroupEpisode,
   TmdbTvEpisodeGroupResult,
   TmdbTvEpisodeResult,
   TmdbTvRatingResult,
@@ -74,6 +76,31 @@ export interface TvOrderingSummary {
   error?: string;
 }
 
+export interface TvOrderingEpisode {
+  id: number;
+  name: string;
+  airDate: string | null;
+  position: number;
+  canonicalEpisodeNumber: number;
+  canonicalSeasonNumber: number;
+  overview: string;
+  productionCode: string;
+  stillPath?: string;
+  voteAverage: number;
+  voteCount: number;
+}
+
+export interface TvOrderingGroup {
+  id: string;
+  name?: string;
+  episodeCount: number;
+  episodes: TvOrderingEpisode[];
+}
+
+export interface TvOrdering extends TvOrderingSummary {
+  groups: TvOrderingGroup[];
+}
+
 export interface TvDetails {
   id: number;
   backdropPath?: string;
@@ -140,6 +167,23 @@ const mapEpisodeResult = (episode: TmdbTvEpisodeResult): Episode => ({
   voteAverage: episode.vote_average,
   voteCount: episode.vote_count,
   stillPath: episode.still_path,
+});
+
+const mapTvOrderingEpisode = (
+  episode: TmdbTvEpisodeGroupEpisode,
+  position: number
+): TvOrderingEpisode => ({
+  airDate: episode.air_date,
+  canonicalEpisodeNumber: episode.episode_number,
+  canonicalSeasonNumber: episode.season_number,
+  id: episode.id,
+  name: episode.name,
+  overview: episode.overview,
+  position,
+  productionCode: episode.production_code,
+  stillPath: episode.still_path,
+  voteAverage: episode.vote_average,
+  voteCount: episode.vote_count,
 });
 
 const mapSeasonResult = (season: TmdbTvSeasonResult): Season => ({
@@ -255,4 +299,20 @@ export const mapTvOrdering = (
   groupCount: ordering.group_count,
   type: TV_ORDERING_TYPE_NAMES[ordering.type],
   isApplied,
+});
+
+export const mapTvOrderingGroups = (
+  ordering: TmdbTvEpisodeGroupDetails
+): TvOrdering => ({
+  ...mapTvOrdering(ordering, true),
+  groups: [...ordering.groups]
+    .sort((group, nextGroup) => group.order - nextGroup.order)
+    .map((group) => ({
+      episodeCount: group.episodes.length,
+      episodes: [...group.episodes]
+        .sort((episode, nextEpisode) => episode.order - nextEpisode.order)
+        .map((episode, index) => mapTvOrderingEpisode(episode, index + 1)),
+      id: group.id,
+      name: group.name,
+    })),
 });

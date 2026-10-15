@@ -1078,41 +1078,101 @@ components:
     TvOrdering:
       type: object
       properties:
-    id:
-      type: string
-      example: 5f0c1a2b3c4d5e6f7a8b9c0d
-    name:
-      type: string
-      example: Absolute Order
-    description:
-      type: string
-    episodeCount:
-      type: number
-    groupCount:
-      type: number
-    type:
-      type: string
-      enum:
-        - original_air_date
-        - absolute
-        - dvd
-        - digital
-        - story_arc
-        - production
-        - tv
-    isApplied:
-      type: boolean
-    error:
-      type: string
-      example: The applied TMDB ordering is no longer available.
+        id:
+          type: string
+          example: 5f0c1a2b3c4d5e6f7a8b9c0d
+        name:
+          type: string
+          example: Absolute Order
+        description:
+          type: string
+        episodeCount:
+          type: number
+        groupCount:
+          type: number
+        type:
+          type: string
+          enum:
+            - original_air_date
+            - absolute
+            - dvd
+            - digital
+            - story_arc
+            - production
+            - tv
+        isApplied:
+          type: boolean
+        error:
+          type: string
+          example: The applied TMDB ordering is no longer available.
       required:
         - id
+    TvOrderingEpisode:
+      type: object
+      properties:
+        id:
+          type: number
+        name:
+          type: string
+        airDate:
+          type: string
+          nullable: true
+        position:
+          type: number
+        canonicalEpisodeNumber:
+          type: number
+        canonicalSeasonNumber:
+          type: number
+        overview:
+          type: string
+        productionCode:
+          type: string
+        stillPath:
+          type: string
+        voteAverage:
+          type: number
+        voteCount:
+          type: number
+      required:
+        - id
+        - name
+        - position
+        - canonicalEpisodeNumber
+        - canonicalSeasonNumber
+    TvOrderingGroup:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        episodeCount:
+          type: number
+        episodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/TvOrderingEpisode'
+      required:
+        - id
+        - episodeCount
+        - episodes
+    TvOrderingDetails:
+      allOf:
+        - $ref: '#/components/schemas/TvOrdering'
+        - type: object
+          properties:
+            groups:
+              type: array
+              items:
+                $ref: '#/components/schemas/TvOrderingGroup'
+      required:
+        - groups
     TvOrderingApply:
       type: object
       properties:
-    orderingId:
-      type: string
-      example: default
+        orderingId:
+          type: string
+          example: default
       required:
         - orderingId
     Season:
@@ -7118,6 +7178,46 @@ paths:
                 items:
                   $ref: '#/components/schemas/TvOrdering'
   /tv/{tvId}/ordering:
+    get:
+      summary: Get the applied TV ordering
+      description: Returns the applied ordering's groups and episodes in TMDB order. Returns no content when the standard season ordering is applied.
+      tags:
+        - tv
+      parameters:
+        - in: path
+          name: tvId
+          required: true
+          schema:
+            type: number
+            example: 76479
+        - in: query
+          name: language
+          schema:
+            type: string
+            example: en
+      responses:
+        '200':
+          description: Applied TV ordering
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TvOrderingDetails'
+        '204':
+          description: No TV ordering applied
+        '422':
+          description: Applied TV ordering is no longer available
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: number
+                  message:
+                    type: string
+                example:
+                  status: 422
+                  message: The applied TMDB ordering is no longer available.
     put:
       summary: Apply a TV ordering
       description: Applies an alternate TMDB ordering at the series level, or clears it with `default`. Requires `MANAGE_SETTINGS`.

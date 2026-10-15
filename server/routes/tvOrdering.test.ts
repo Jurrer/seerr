@@ -74,6 +74,86 @@ setEpisodeGroups(async ({ tvId }) => {
   return getEpisodeGroups({ tvId });
 });
 
+type GetEpisodeGroup = (options: {
+  orderingId: string;
+  language?: string;
+}) => Promise<unknown | null>;
+
+let getEpisodeGroup: GetEpisodeGroup = async () => null;
+
+Object.defineProperty(TheMovieDb.prototype, 'getTvEpisodeGroup', {
+  value: (options: Parameters<GetEpisodeGroup>[0]) => getEpisodeGroup(options),
+  configurable: true,
+});
+
+const episodeGroup = {
+  id: ORDERING_ID,
+  name: 'Absolute Order',
+  description: 'Absolute episode order',
+  episode_count: 3,
+  group_count: 2,
+  network: null,
+  type: 2,
+  groups: [
+    {
+      id: 'group-2',
+      name: 'Later Arc',
+      order: 2,
+      episodes: [
+        {
+          id: 2,
+          air_date: '2020-02-02',
+          episode_number: 2,
+          name: 'Canonical 1x2',
+          overview: 'Second canonical episode',
+          production_code: 'PC002',
+          season_number: 1,
+          show_id: TV_ID,
+          still_path: '/second.jpg',
+          vote_average: 8.4,
+          vote_count: 2,
+          order: 0,
+        },
+      ],
+    },
+    {
+      id: 'group-1',
+      name: 'First Arc',
+      order: 1,
+      episodes: [
+        {
+          id: 1,
+          air_date: '2020-01-02',
+          episode_number: 2,
+          name: 'Canonical 1x2 First Position',
+          overview: 'Second ordering position',
+          production_code: 'PC001',
+          season_number: 1,
+          show_id: TV_ID,
+          still_path: '/first-position.jpg',
+          vote_average: 7.5,
+          vote_count: 1,
+          order: 2,
+        },
+        {
+          id: 3,
+          air_date: '2020-01-01',
+          episode_number: 1,
+          name: 'Canonical 1x1',
+          overview: 'First canonical episode',
+          production_code: 'PC003',
+          season_number: 1,
+          show_id: TV_ID,
+          still_path: '/first.jpg',
+          vote_average: 9.1,
+          vote_count: 3,
+          order: 0,
+        },
+      ],
+    },
+  ],
+};
+
 let app: Express;
 
 function createApp() {
@@ -142,6 +222,7 @@ beforeEach(() => {
       },
     ],
   });
+  getEpisodeGroup = async () => episodeGroup;
 });
 
 describe('GET /tv/:id/orderings', () => {
@@ -243,6 +324,100 @@ describe('PUT /tv/:id/ordering', () => {
     assert.strictEqual(missing.status, 422);
     assert.strictEqual(omitted.status, 422);
     assert.strictEqual(await getRepository(TvOrdering).count(), 0);
+  });
+});
+
+describe('GET /tv/:id/ordering', () => {
+  it('returns the applied ordering groups in TMDB order', async () => {
+    await seedOrdering(TV_ID, ORDERING_ID);
+    const agent = await loginAs('demo@seerr.dev');
+    const res = await agent.get(`/tv/${TV_ID}/ordering`);
+
+    assert.strictEqual(res.status, 200);
+    assert.deepStrictEqual(res.body, {
+      id: ORDERING_ID,
+      name: 'Absolute Order',
+      description: 'Absolute episode order',
+      episodeCount: 3,
+      groupCount: 2,
+      type: 'absolute',
+      isApplied: true,
+      groups: [
+        {
+          id: 'group-1',
+          name: 'First Arc',
+          episodeCount: 2,
+          episodes: [
+            {
+              id: 3,
+              name: 'Canonical 1x1',
+              airDate: '2020-01-01',
+              position: 1,
+              canonicalEpisodeNumber: 1,
+              canonicalSeasonNumber: 1,
+              overview: 'First canonical episode',
+              productionCode: 'PC003',
+              stillPath: '/first.jpg',
+              voteAverage: 9.1,
+              voteCount: 3,
+            },
+            {
+              id: 1,
+              name: 'Canonical 1x2 First Position',
+              airDate: '2020-01-02',
+              position: 2,
+              canonicalEpisodeNumber: 2,
+              canonicalSeasonNumber: 1,
+              overview: 'Second ordering position',
+              productionCode: 'PC001',
+              stillPath: '/first-position.jpg',
+              voteAverage: 7.5,
+              voteCount: 1,
+            },
+          ],
+        },
+        {
+          id: 'group-2',
+          name: 'Later Arc',
+          episodeCount: 1,
+          episodes: [
+            {
+              id: 2,
+              name: 'Canonical 1x2',
+              airDate: '2020-02-02',
+              position: 1,
+              canonicalEpisodeNumber: 2,
+              canonicalSeasonNumber: 1,
+              overview: 'Second canonical episode',
+              productionCode: 'PC002',
+              stillPath: '/second.jpg',
+              voteAverage: 8.4,
+              voteCount: 2,
+            },
+          ],
+        },
+      ],
+    });
+  });
+
+  it('returns no content when no ordering is applied', async () => {
+    const agent = await loginAs('demo@seerr.dev');
+    const res = await agent.get(`/tv/${TV_ID}/ordering`);
+
+    assert.strictEqual(res.status, 204);
+  });
+
+  it('returns an ordering error when the applied ordering is broken', async () => {
+    await seedOrdering(TV_ID, ORDERING_ID);
+    getEpisodeGroup = async () => null;
+    const agent = await loginAs('demo@seerr.dev');
+    const res = await agent.get(`/tv/${TV_ID}/ordering`);
+
+    assert.strictEqual(res.status, 422);
+    assert.deepStrictEqual(res.body, {
+      status: 422,
+      message: 'The applied TMDB ordering is no longer available.',
+    });
   });
 });
 

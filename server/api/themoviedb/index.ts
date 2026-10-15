@@ -24,6 +24,7 @@ import type {
   TmdbSearchTvResponse,
   TmdbSeasonWithEpisodes,
   TmdbTvDetails,
+  TmdbTvEpisodeGroupDetails,
   TmdbTvEpisodeGroupResult,
   TmdbTvScanDetails,
   TmdbUpcomingMoviesResponse,
@@ -501,6 +502,21 @@ class TheMovieDb extends ExternalAPI implements TvShowProvider {
     return this.get<{ results: TmdbTvEpisodeGroupResult[] }>(
       `/tv/${tvId}/episode_groups`,
       { params: { language } }
+    );
+  }
+
+  public getTvEpisodeGroup({
+    orderingId,
+    language = this.locale,
+  }: {
+    orderingId: string;
+    language?: string;
+  }): Promise<TmdbTvEpisodeGroupDetails> {
+    return this.get<TmdbTvEpisodeGroupDetails>(
+      `/tv/episode_group/${orderingId}`,
+      {
+        params: { language },
+      }
     );
   }
 

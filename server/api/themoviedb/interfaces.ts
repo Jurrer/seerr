@@ -315,6 +315,21 @@ export interface TmdbTvEpisodeGroupResult {
   type: number;
 }
 
+export interface TmdbTvEpisodeGroupEpisode extends TmdbTvEpisodeResult {
+  order: number;
+}
+
+export interface TmdbTvEpisodeGroup {
+  id: string;
+  name?: string;
+  order: number;
+  episodes: TmdbTvEpisodeGroupEpisode[];
+}
+
+export interface TmdbTvEpisodeGroupDetails extends TmdbTvEpisodeGroupResult {
+  groups: TmdbTvEpisodeGroup[];
+}
+
 export interface TmdbTvScanDetails {
   id: number;
   name: string;

@@ -16,6 +16,7 @@ import {
   mapSeasonWithEpisodes,
   mapTvDetails,
   mapTvOrdering,
+  mapTvOrderingGroups,
 } from '@server/models/Tv';
 import { Router, type Request } from 'express';
 
@@ -176,6 +177,34 @@ tvRoutes.get('/:id/orderings', async (req, res, next) => {
       tvId,
     });
     return next({ status: 500, message: 'Unable to retrieve TV orderings.' });
+  }
+});
+
+tvRoutes.get('/:id/ordering', async (req, res, next) => {
+  const tvId = Number(req.params.id);
+  try {
+    const appliedOrdering = await getAppliedOrdering(tvId);
+    if (!appliedOrdering) {
+      return res.status(204).send();
+    }
+
+    const tmdb = new TheMovieDb();
+    const ordering = await tmdb.getTvEpisodeGroup({
+      orderingId: appliedOrdering.orderingId,
+      language: getLanguage(req),
+    });
+
+    return res.status(200).json(mapTvOrderingGroups(ordering));
+  } catch (e) {
+    logger.debug('Something went wrong retrieving the applied TV ordering', {
+      label: 'API',
+      errorMessage: e.message,
+      tvId: req.params.id,
+    });
+    return next({
+      status: 422,
+      message: BROKEN_ORDERING_ERROR,
+    });
   }
 });
 
