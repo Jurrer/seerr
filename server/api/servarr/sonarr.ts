@@ -95,6 +95,7 @@ export interface AddSeriesOptions {
   profileId: number;
   languageProfileId?: number;
   seasons: number[];
+  episodes?: AddSeriesEpisode[];
   seasonFolder: boolean;
   rootFolderPath: string;
   tags?: number[];
@@ -102,6 +103,11 @@ export interface AddSeriesOptions {
   monitored?: boolean;
   monitorNewItems?: SonarrSeries['monitorNewItems'];
   searchNow?: boolean;
+}
+
+export interface AddSeriesEpisode {
+  seasonNumber: number;
+  episodeNumber: number;
 }
 
 export interface LanguageProfile {
@@ -213,11 +219,31 @@ class SonarrAPI extends ServarrBase<{
 
       // If the series already exists, we will simply just update it
       if (series.id) {
+        let exactEpisodeIds: number[] | undefined;
+
+        if (options.episodes) {
+          const sonarrEpisodes = await this.getEpisodes(series.id);
+          exactEpisodeIds = this.getExactEpisodeIds(
+            sonarrEpisodes,
+            options.episodes
+          );
+          series.seasons = series.seasons.map((season) => ({
+            seasonNumber: season.seasonNumber,
+            monitored: false,
+          }));
+        }
+
         series.monitored = options.monitored ?? series.monitored;
         series.tags = options.tags
           ? Array.from(new Set([...series.tags, ...options.tags]))
           : series.tags;
-        series.seasons = this.buildSeasonList(options.seasons, series.seasons);
+
+        if (!options.episodes) {
+          series.seasons = this.buildSeasonList(
+            options.seasons,
+            series.seasons
+          );
+        }
 
         const newSeriesResponse = await this.axios.put<SonarrSeries>(
           '/series',
@@ -235,32 +261,45 @@ class SonarrAPI extends ServarrBase<{
             series: newSeriesResponse.data,
           });
 
-          try {
-            const episodes = await this.getEpisodes(newSeriesResponse.data.id);
-            const episodeIdsToMonitor = episodes
-              .filter(
-                (ep) =>
-                  options.seasons.includes(ep.seasonNumber) && !ep.monitored
-              )
-              .map((ep) => ep.id);
-
-            if (episodeIdsToMonitor.length > 0) {
-              logger.debug(
-                'Re-monitoring unmonitored episodes for requested seasons.',
-                {
-                  label: 'Sonarr',
-                  seriesId: newSeriesResponse.data.id,
-                  episodeCount: episodeIdsToMonitor.length,
-                }
-              );
-              await this.monitorEpisodes(episodeIdsToMonitor);
+          if (exactEpisodeIds) {
+            if (exactEpisodeIds.length > 0) {
+              logger.debug('Monitoring exact episodes for request.', {
+                label: 'Sonarr',
+                seriesId: newSeriesResponse.data.id,
+                episodeCount: exactEpisodeIds.length,
+              });
+              await this.monitorEpisodes(exactEpisodeIds);
             }
-          } catch (e) {
-            logger.warn('Failed to re-monitor episodes', {
-              label: 'Sonarr',
-              errorMessage: e.message,
-              seriesId: newSeriesResponse.data.id,
-            });
+          } else {
+            try {
+              const episodes = await this.getEpisodes(
+                newSeriesResponse.data.id
+              );
+              const episodeIdsToMonitor = episodes
+                .filter(
+                  (ep) =>
+                    options.seasons.includes(ep.seasonNumber) && !ep.monitored
+                )
+                .map((ep) => ep.id);
+
+              if (episodeIdsToMonitor.length > 0) {
+                logger.debug(
+                  'Re-monitoring unmonitored episodes for requested seasons.',
+                  {
+                    label: 'Sonarr',
+                    seriesId: newSeriesResponse.data.id,
+                    episodeCount: episodeIdsToMonitor.length,
+                  }
+                );
+                await this.monitorEpisodes(episodeIdsToMonitor);
+              }
+            } catch (e) {
+              logger.warn('Failed to re-monitor episodes', {
+                label: 'Sonarr',
+                errorMessage: e.message,
+                seriesId: newSeriesResponse.data.id,
+              });
+            }
           }
 
           if (options.searchNow) {
@@ -285,7 +324,7 @@ class SonarrAPI extends ServarrBase<{
           qualityProfileId: options.profileId,
           languageProfileId: options.languageProfileId,
           seasons: this.buildSeasonList(
-            options.seasons,
+            options.episodes ? [] : options.seasons,
             series.seasons.map((season) => ({
               seasonNumber: season.seasonNumber,
               // We force all seasons to false if its the first request
@@ -311,6 +350,20 @@ class SonarrAPI extends ServarrBase<{
           label: 'Sonarr',
           series: createdSeriesResponse.data,
         });
+
+        if (options.episodes) {
+          const sonarrEpisodes = await this.getEpisodes(
+            createdSeriesResponse.data.id
+          );
+          const episodeIds = this.getExactEpisodeIds(
+            sonarrEpisodes,
+            options.episodes
+          );
+
+          if (episodeIds.length > 0) {
+            await this.monitorEpisodes(episodeIds);
+          }
+        }
       } else {
         logger.error('Failed to add series to Sonarr', {
           label: 'Sonarr',
@@ -351,6 +404,31 @@ class SonarrAPI extends ServarrBase<{
 
       throw new Error('Failed to get language profiles', { cause: e });
     }
+  }
+
+  private getExactEpisodeIds(
+    sonarrEpisodes: EpisodeResult[],
+    requestedEpisodes: AddSeriesEpisode[]
+  ): number[] {
+    const episodeIds = new Set<number>();
+
+    for (const requestedEpisode of requestedEpisodes) {
+      const sonarrEpisode = sonarrEpisodes.find(
+        (candidate) =>
+          candidate.seasonNumber === requestedEpisode.seasonNumber &&
+          candidate.episodeNumber === requestedEpisode.episodeNumber
+      );
+
+      if (!sonarrEpisode) {
+        throw new Error(
+          `Failed to map Sonarr episode ${requestedEpisode.seasonNumber}x${requestedEpisode.episodeNumber}`
+        );
+      }
+
+      episodeIds.add(sonarrEpisode.id);
+    }
+
+    return [...episodeIds];
   }
 
   public async searchSeries(seriesId: number): Promise<void> {

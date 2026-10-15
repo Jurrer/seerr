@@ -3,7 +3,18 @@ import { afterEach, describe, it, mock } from 'node:test';
 
 import type { AxiosInstance } from 'axios';
 
-import SonarrAPI from '@server/api/servarr/sonarr';
+import SonarrAPI, { type SonarrSeason } from '@server/api/servarr/sonarr';
+
+interface SonarrEpisodeResult {
+  id: number;
+  seasonNumber: number;
+  episodeNumber: number;
+  monitored: boolean;
+}
+
+interface SeriesUpdatePayload {
+  seasons: SonarrSeason[];
+}
 
 function buildSonarr(): SonarrAPI {
   return new SonarrAPI({ url: 'http://localhost:8989/api/v3', apiKey: 'test' });
@@ -115,5 +126,243 @@ describe('SonarrAPI getSeriesByTvdbId', () => {
     await assert.rejects(() => sonarr.getSeriesByTvdbId(1234), {
       message: 'Series not found',
     });
+  });
+});
+
+describe('SonarrAPI addSeries', () => {
+  afterEach(() => mock.restoreAll());
+
+  it('monitors only exact episodes when episode numbers are provided', async () => {
+    const sonarr = buildSonarr();
+    const put = mock.method(getAxios(sonarr), 'put', async () => ({
+      data: {
+        id: 9,
+        title: 'Test Series',
+        titleSlug: 'test-series',
+        tags: [],
+        seasons: [
+          { seasonNumber: 1, monitored: true },
+          { seasonNumber: 2, monitored: false },
+        ],
+      },
+    }));
+    const getEpisodes = mock.method(
+      SonarrAPI.prototype,
+      'getEpisodes',
+      async (): Promise<SonarrEpisodeResult[]> => [
+        { id: 101, seasonNumber: 1, episodeNumber: 1, monitored: false },
+        { id: 102, seasonNumber: 1, episodeNumber: 2, monitored: false },
+        { id: 103, seasonNumber: 2, episodeNumber: 1, monitored: false },
+        { id: 104, seasonNumber: 2, episodeNumber: 2, monitored: true },
+      ]
+    );
+    const monitorEpisodes = mock.method(
+      SonarrAPI.prototype,
+      'monitorEpisodes',
+      async () => undefined
+    );
+
+    mock.method(SonarrAPI.prototype, 'getSeriesByTvdbId', async () => ({
+      id: 9,
+      title: 'Test Series',
+      titleSlug: 'test-series',
+      tags: [],
+      seasons: [
+        { seasonNumber: 1, monitored: true },
+        { seasonNumber: 2, monitored: false },
+      ],
+    }));
+
+    await sonarr.addSeries({
+      tvdbid: 1234,
+      title: 'Test Series',
+      profileId: 1,
+      seasons: [1, 2],
+      seasonFolder: true,
+      rootFolderPath: '/tv',
+      seriesType: 'standard',
+      episodes: [
+        { seasonNumber: 1, episodeNumber: 1 },
+        { seasonNumber: 2, episodeNumber: 2 },
+      ],
+    });
+
+    assert.deepStrictEqual(
+      (put.mock.calls[0].arguments[1] as SeriesUpdatePayload).seasons,
+      [
+        { seasonNumber: 1, monitored: false },
+        { seasonNumber: 2, monitored: false },
+      ]
+    );
+    assert.strictEqual(getEpisodes.mock.callCount(), 1);
+    assert.strictEqual(monitorEpisodes.mock.callCount(), 1);
+    assert.deepStrictEqual(
+      monitorEpisodes.mock.calls[0].arguments[0],
+      [101, 104]
+    );
+  });
+
+  it('fails before monitoring when an exact episode is unavailable', async () => {
+    const sonarr = buildSonarr();
+    const put = mock.method(getAxios(sonarr), 'put', async () => ({
+      data: { id: 9, title: 'Test Series', titleSlug: 'test-series' },
+    }));
+    const monitorEpisodes = mock.method(SonarrAPI.prototype, 'monitorEpisodes');
+
+    mock.method(SonarrAPI.prototype, 'getSeriesByTvdbId', async () => ({
+      id: 9,
+      title: 'Test Series',
+      titleSlug: 'test-series',
+      seasons: [{ seasonNumber: 1, monitored: false }],
+      tags: [],
+    }));
+    mock.method(
+      SonarrAPI.prototype,
+      'getEpisodes',
+      async (): Promise<SonarrEpisodeResult[]> => [
+        { id: 101, seasonNumber: 1, episodeNumber: 1, monitored: false },
+      ]
+    );
+
+    await assert.rejects(
+      sonarr.addSeries({
+        tvdbid: 1234,
+        title: 'Test Series',
+        profileId: 1,
+        seasons: [1],
+        seasonFolder: true,
+        rootFolderPath: '/tv',
+        seriesType: 'standard',
+        episodes: [
+          { seasonNumber: 1, episodeNumber: 1 },
+          { seasonNumber: 1, episodeNumber: 2 },
+        ],
+      }),
+      (error: unknown) => {
+        const cause = (error as { cause?: Error }).cause;
+        assert.ok(cause);
+        assert.ok(cause.message.includes('Failed to map Sonarr episode 1x2'));
+        return true;
+      }
+    );
+
+    assert.strictEqual(put.mock.callCount(), 0);
+    assert.strictEqual(monitorEpisodes.mock.callCount(), 0);
+  });
+
+  it('monitors exact episodes after creating a new series', async () => {
+    const sonarr = buildSonarr();
+    const post = mock.method(getAxios(sonarr), 'post', async () => ({
+      data: { id: 9, title: 'Test Series', titleSlug: 'test-series' },
+    }));
+    mock.method(SonarrAPI.prototype, 'getSeriesByTvdbId', async () => ({
+      id: 0,
+      title: 'Test Series',
+      seasons: [
+        { seasonNumber: 1, monitored: false },
+        { seasonNumber: 2, monitored: false },
+      ],
+    }));
+    mock.method(
+      SonarrAPI.prototype,
+      'getEpisodes',
+      async (): Promise<SonarrEpisodeResult[]> => [
+        { id: 101, seasonNumber: 1, episodeNumber: 1, monitored: false },
+        { id: 104, seasonNumber: 2, episodeNumber: 2, monitored: false },
+      ]
+    );
+    const monitorEpisodes = mock.method(
+      SonarrAPI.prototype,
+      'monitorEpisodes',
+      async () => undefined
+    );
+
+    await sonarr.addSeries({
+      tvdbid: 1234,
+      title: 'Test Series',
+      profileId: 1,
+      seasons: [1, 2],
+      seasonFolder: true,
+      rootFolderPath: '/tv',
+      seriesType: 'standard',
+      episodes: [
+        { seasonNumber: 1, episodeNumber: 1 },
+        { seasonNumber: 2, episodeNumber: 2 },
+      ],
+    });
+
+    assert.deepStrictEqual(
+      (post.mock.calls[0].arguments[1] as SeriesUpdatePayload).seasons,
+      [
+        { seasonNumber: 1, monitored: false },
+        { seasonNumber: 2, monitored: false },
+      ]
+    );
+    assert.deepStrictEqual(
+      monitorEpisodes.mock.calls[0].arguments[0],
+      [101, 104]
+    );
+  });
+
+  it('keeps season-based monitoring when exact episodes are not provided', async () => {
+    const sonarr = buildSonarr();
+    const put = mock.method(getAxios(sonarr), 'put', async () => ({
+      data: {
+        id: 9,
+        title: 'Test Series',
+        titleSlug: 'test-series',
+        tags: [],
+        seasons: [
+          { seasonNumber: 1, monitored: false },
+          { seasonNumber: 2, monitored: false },
+        ],
+      },
+    }));
+    mock.method(SonarrAPI.prototype, 'getSeriesByTvdbId', async () => ({
+      id: 9,
+      title: 'Test Series',
+      titleSlug: 'test-series',
+      tags: [],
+      seasons: [
+        { seasonNumber: 1, monitored: false },
+        { seasonNumber: 2, monitored: false },
+      ],
+    }));
+    mock.method(
+      SonarrAPI.prototype,
+      'getEpisodes',
+      async (): Promise<SonarrEpisodeResult[]> => [
+        { id: 101, seasonNumber: 1, episodeNumber: 1, monitored: false },
+        { id: 102, seasonNumber: 1, episodeNumber: 2, monitored: false },
+        { id: 103, seasonNumber: 2, episodeNumber: 1, monitored: false },
+      ]
+    );
+    const monitorEpisodes = mock.method(
+      SonarrAPI.prototype,
+      'monitorEpisodes',
+      async () => undefined
+    );
+
+    await sonarr.addSeries({
+      tvdbid: 1234,
+      title: 'Test Series',
+      profileId: 1,
+      seasons: [1],
+      seasonFolder: true,
+      rootFolderPath: '/tv',
+      seriesType: 'standard',
+    });
+
+    assert.deepStrictEqual(
+      (put.mock.calls[0].arguments[1] as SeriesUpdatePayload).seasons,
+      [
+        { seasonNumber: 1, monitored: true },
+        { seasonNumber: 2, monitored: false },
+      ]
+    );
+    assert.deepStrictEqual(
+      monitorEpisodes.mock.calls[0].arguments[0],
+      [101, 102]
+    );
   });
 });

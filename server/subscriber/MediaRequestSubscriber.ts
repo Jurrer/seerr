@@ -1,6 +1,7 @@
 import type { RadarrMovieOptions } from '@server/api/servarr/radarr';
 import RadarrAPI from '@server/api/servarr/radarr';
 import type {
+  AddSeriesEpisode,
   AddSeriesOptions,
   SonarrSeries,
 } from '@server/api/servarr/sonarr';
@@ -710,13 +711,29 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           }
         }
 
+        const orderingEpisodes: AddSeriesEpisode[] | undefined = entity
+          .orderingGroups?.length
+          ? entity.orderingGroups.flatMap((group) =>
+              group.episodes.map((episode) => ({
+                seasonNumber: episode.seasonNumber,
+                episodeNumber: episode.episodeNumber,
+              }))
+            )
+          : undefined;
         const sonarrSeriesOptions: AddSeriesOptions = {
           profileId: qualityProfile,
           languageProfileId: languageProfile,
           rootFolderPath: rootFolder,
           title: series.name,
           tvdbid: tvdbId,
-          seasons: entity.seasons.map((season) => season.seasonNumber),
+          seasons: orderingEpisodes
+            ? [
+                ...new Set(
+                  orderingEpisodes.map((episode) => episode.seasonNumber)
+                ),
+              ]
+            : entity.seasons.map((season) => season.seasonNumber),
+          episodes: orderingEpisodes,
           seasonFolder: sonarrSettings.enableSeasonFolders,
           seriesType,
           tags,
@@ -753,10 +770,13 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
             try {
               const requestRepository = getRepository(MediaRequest);
 
-              if (entity.status !== MediaRequestStatus.FAILED) {
-                entity.status = MediaRequestStatus.FAILED;
-                await requestRepository.save(entity);
-              }
+              entity.orderingGroups?.forEach((group) => {
+                group.episodes.forEach((episode) => {
+                  episode.status = MediaRequestStatus.FAILED;
+                });
+              });
+              entity.status = MediaRequestStatus.FAILED;
+              await requestRepository.save(entity);
             } catch (saveError) {
               logger.error('Failed to mark request as FAILED', {
                 label: 'Media Request',
