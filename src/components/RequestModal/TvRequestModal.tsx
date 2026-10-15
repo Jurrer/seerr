@@ -10,7 +10,10 @@ import useToasts from '@app/hooks/useToasts';
 import { useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
-import { orderingGroupRequestStates } from '@app/utils/orderingRequestHelper';
+import {
+  orderingGroupRequestStates,
+  storedOrderingGroupRequestStates,
+} from '@app/utils/orderingRequestHelper';
 import { ANIME_KEYWORD_ID } from '@server/api/themoviedb/constants';
 import { MediaRequestStatus, MediaStatus } from '@server/constants/media';
 import type { MediaRequest } from '@server/entity/MediaRequest';
@@ -85,6 +88,9 @@ const TvRequestModal = ({
   const editingSeasons: number[] = (editRequest?.seasons ?? []).map(
     (season) => season.seasonNumber
   );
+  const editingOrderingGroups: string[] = (
+    editRequest?.orderingGroups ?? []
+  ).map((group) => group.groupId);
   const { data, error } = useSWR<TvDetails>(`/api/v1/tv/${tmdbId}`);
   const [requestOverrides, setRequestOverrides] =
     useState<RequestOverrides | null>(null);
@@ -93,7 +99,7 @@ const TvRequestModal = ({
   );
   const [selectedOrderingGroups, setSelectedOrderingGroups] = useState<
     string[]
-  >([]);
+  >(editRequest ? editingOrderingGroups : []);
   const intl = useIntl();
   const { user, hasPermission } = useUser();
   const [searchModal, setSearchModal] = useState<{
@@ -109,29 +115,39 @@ const TvRequestModal = ({
       : null
   );
 
-  const isOrderingRequest = !editRequest && !!data?.currentOrdering?.id;
+  const isEditingOrderingRequest =
+    !!editRequest && editRequest.orderingGroups.length > 0;
+  const isCreatingOrderingRequest = !editRequest && !!data?.currentOrdering?.id;
+  const isOrderingRequest =
+    isEditingOrderingRequest || isCreatingOrderingRequest;
   const {
     data: appliedOrdering,
     error: appliedOrderingError,
     isLoading: isLoadingAppliedOrdering,
   } = useSWR<TvOrdering>(
-    isOrderingRequest && !data?.currentOrdering?.error
+    isCreatingOrderingRequest && !data?.currentOrdering?.error
       ? `/api/v1/tv/${tmdbId}/ordering`
       : null
   );
-  const orderingGroupStates = appliedOrdering
-    ? orderingGroupRequestStates(
-        appliedOrdering,
-        data?.mediaInfo?.requests ?? [],
-        is4k
-      )
+  const orderingGroupStates = isEditingOrderingRequest
+    ? storedOrderingGroupRequestStates(editRequest?.orderingGroups ?? [])
+    : appliedOrdering
+      ? orderingGroupRequestStates(
+          appliedOrdering,
+          data?.mediaInfo?.requests ?? [],
+          is4k
+        )
+      : [];
+  const unrequestedOrderingGroups = isCreatingOrderingRequest
+    ? orderingGroupStates
+        .filter((group) => group.requestableCount > 0)
+        .map((group) => group.id)
     : [];
-  const unrequestedOrderingGroups = orderingGroupStates
-    .filter((group) => group.requestableCount > 0)
-    .map((group) => group.id);
   const orderingError =
     data?.currentOrdering?.error ||
-    (isOrderingRequest && !isLoadingAppliedOrdering && !appliedOrdering) ||
+    (isCreatingOrderingRequest &&
+      !isLoadingAppliedOrdering &&
+      !appliedOrdering) ||
     appliedOrderingError;
   const selectedRequestCount = isOrderingRequest
     ? selectedOrderingGroups.length
@@ -139,7 +155,9 @@ const TvRequestModal = ({
   const currentlyRemaining =
     (quota?.tv.remaining ?? 0) -
     selectedRequestCount +
-    (editRequest?.seasons ?? []).length;
+    (isEditingOrderingRequest
+      ? (editRequest?.orderingGroups.length ?? 0)
+      : (editRequest?.seasons.length ?? 0));
 
   const updateRequest = async (alsoApproveRequest = false) => {
     if (!editRequest) {
@@ -152,7 +170,26 @@ const TvRequestModal = ({
     }
 
     try {
-      if (selectedSeasons.length > 0) {
+      if (isEditingOrderingRequest) {
+        if (selectedOrderingGroups.length > 0) {
+          await axios.put(`/api/v1/request/${editRequest.id}`, {
+            mediaType: 'tv',
+            serverId: requestOverrides?.server,
+            profileId: requestOverrides?.profile,
+            rootFolder: requestOverrides?.folder,
+            languageProfileId: requestOverrides?.language,
+            userId: requestOverrides?.user?.id,
+            tags: requestOverrides?.tags,
+            orderingGroups: selectedOrderingGroups,
+          });
+
+          if (alsoApproveRequest) {
+            await axios.post(`/api/v1/request/${editRequest.id}/approve`);
+          }
+        } else {
+          await axios.delete(`/api/v1/request/${editRequest.id}`);
+        }
+      } else if (selectedSeasons.length > 0) {
         await axios.put(`/api/v1/request/${editRequest.id}`, {
           mediaType: 'tv',
           serverId: requestOverrides?.server,
@@ -175,7 +212,9 @@ const TvRequestModal = ({
 
       addToast(
         <span>
-          {selectedSeasons.length > 0
+          {(isEditingOrderingRequest
+            ? selectedOrderingGroups.length
+            : selectedSeasons.length) > 0
             ? intl.formatMessage(
                 alsoApproveRequest
                   ? messages.requestApproved
@@ -212,7 +251,7 @@ const TvRequestModal = ({
 
   const sendRequest = async () => {
     if (
-      isOrderingRequest &&
+      isCreatingOrderingRequest &&
       (selectedOrderingGroups.length === 0 || orderingError)
     ) {
       return;
@@ -336,11 +375,16 @@ const TvRequestModal = ({
     selectedOrderingGroups.includes(groupId);
 
   const toggleOrderingGroup = (groupId: string): void => {
-    if (!unrequestedOrderingGroups.includes(groupId)) {
+    const isSelectable =
+      (isEditingOrderingRequest && editingOrderingGroups.includes(groupId)) ||
+      unrequestedOrderingGroups.includes(groupId);
+
+    if (!isSelectable) {
       return;
     }
 
     if (
+      isCreatingOrderingRequest &&
       quota?.tv.limit &&
       currentlyRemaining <= 0 &&
       !isSelectedOrderingGroup(groupId)
@@ -384,6 +428,15 @@ const TvRequestModal = ({
   );
 
   const toggleAllOrderingGroups = (): void => {
+    if (isEditingOrderingRequest) {
+      if (selectedOrderingGroups.length < editingOrderingGroups.length) {
+        setSelectedOrderingGroups(editingOrderingGroups);
+      } else {
+        setSelectedOrderingGroups([]);
+      }
+      return;
+    }
+
     if (
       quota?.tv.limit &&
       (quota?.tv.remaining ?? 0) < unrequestedOrderingGroups.length
@@ -435,7 +488,10 @@ const TvRequestModal = ({
 
   const isAllOrderingGroups = (): boolean =>
     selectedOrderingGroups.length > 0 &&
-    selectedOrderingGroups.length === unrequestedOrderingGroups.length;
+    selectedOrderingGroups.length ===
+      (isEditingOrderingRequest
+        ? editingOrderingGroups.length
+        : unrequestedOrderingGroups.length);
 
   const getSeasonRequest = (
     seasonNumber: number
@@ -480,6 +536,9 @@ const TvRequestModal = ({
     !isOrderingRequest && !settings.currentSettings.partialRequestsEnabled;
   const isOverQuota =
     !!quota?.tv.limit && unrequestedCount > (quota?.tv.remaining ?? 0);
+  const selectedEditRequestCount = isEditingOrderingRequest
+    ? selectedOrderingGroups.length
+    : selectedSeasons.length;
 
   return data && !error && !data.externalIds.tvdbId && searchModal.show ? (
     <SearchByNameModal
@@ -496,7 +555,7 @@ const TvRequestModal = ({
     />
   ) : (
     <Modal
-      loading={!data || (isOrderingRequest && isLoadingAppliedOrdering)}
+      loading={!data || (isCreatingOrderingRequest && isLoadingAppliedOrdering)}
       backgroundClickable
       onCancel={tvdbId ? () => setSearchModal({ show: true }) : onCancel}
       onOk={() =>
@@ -518,7 +577,7 @@ const TvRequestModal = ({
       subTitle={data?.name}
       okText={
         editRequest
-          ? selectedSeasons.length === 0
+          ? selectedEditRequestCount === 0
             ? intl.formatMessage(messages.cancel)
             : hasPermission(Permission.MANAGE_REQUESTS)
               ? intl.formatMessage(messages.approve)
@@ -568,8 +627,7 @@ const TvRequestModal = ({
       }
       okButtonType={
         editRequest
-          ? settings.currentSettings.partialRequestsEnabled &&
-            selectedSeasons.length === 0
+          ? selectedEditRequestCount === 0
             ? 'danger'
             : hasPermission(Permission.MANAGE_REQUESTS)
               ? 'success'
@@ -592,7 +650,7 @@ const TvRequestModal = ({
               username: editRequest?.requestedBy.displayName,
             })
         : null}
-      {isOrderingRequest && orderingError && (
+      {isCreatingOrderingRequest && orderingError && (
         <div className="mt-6">
           <Alert
             title={intl.formatMessage(messages.orderingerror)}
@@ -717,7 +775,10 @@ const TvRequestModal = ({
                               }
                             }}
                             className={`relative inline-flex h-5 w-10 flex-shrink-0 cursor-pointer items-center justify-center pt-2 focus:outline-none ${
-                              group.requestableCount === 0 ? 'opacity-50' : ''
+                              !isEditingOrderingRequest &&
+                              group.requestableCount === 0
+                                ? 'opacity-50'
+                                : ''
                             }`}
                           >
                             <span

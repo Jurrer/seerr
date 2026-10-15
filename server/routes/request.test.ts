@@ -14,6 +14,8 @@ import {
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import { MediaRequest } from '@server/entity/MediaRequest';
+import OrderingGroupEpisodeRequest from '@server/entity/OrderingGroupEpisodeRequest';
+import OrderingGroupRequest from '@server/entity/OrderingGroupRequest';
 import OverrideRule from '@server/entity/OverrideRule';
 import Season from '@server/entity/Season';
 import SeasonRequest from '@server/entity/SeasonRequest';
@@ -430,6 +432,68 @@ async function seedTvRequest(
   );
 }
 
+async function seedOrderingTvRequest(requestedBy: User) {
+  const requestRepository = getRepository(MediaRequest);
+  const request = await requestRepository.save(
+    new MediaRequest({
+      type: MediaType.TV,
+      status: MediaRequestStatus.PENDING,
+      media: await seedTvMedia(77777),
+      requestedBy,
+      is4k: true,
+      serverId: 10,
+      profileId: 20,
+      rootFolder: '/tv',
+      orderingGroups: [
+        new OrderingGroupRequest({
+          orderingId: 'absolute-order',
+          groupId: 'group-1',
+          name: 'Stored First Arc',
+          episodeCount: 2,
+          status: MediaRequestStatus.PENDING,
+          episodes: [
+            new OrderingGroupEpisodeRequest({
+              position: 1,
+              seasonNumber: 1,
+              episodeNumber: 1,
+              name: 'Stored canonical episode',
+              status: MediaRequestStatus.PENDING,
+            }),
+            new OrderingGroupEpisodeRequest({
+              position: 2,
+              seasonNumber: 2,
+              episodeNumber: 2,
+              name: 'Second stored canonical episode',
+              status: MediaRequestStatus.PENDING,
+            }),
+          ],
+        }),
+        new OrderingGroupRequest({
+          orderingId: 'absolute-order',
+          groupId: 'group-2',
+          name: 'Stored Later Arc',
+          episodeCount: 1,
+          status: MediaRequestStatus.PENDING,
+          episodes: [
+            new OrderingGroupEpisodeRequest({
+              position: 1,
+              seasonNumber: 3,
+              episodeNumber: 3,
+              name: 'Stored third canonical episode',
+              status: MediaRequestStatus.PENDING,
+            }),
+          ],
+        }),
+      ],
+    })
+  );
+
+  return requestRepository.findOneOrFail({
+    where: { id: request.id },
+    relations: { orderingGroups: { episodes: true } },
+  });
+}
+
 describe('PUT /request/:requestId (tv)', () => {
   it('does not add a season held by another request', async () => {
     const requestRepo = getRepository(MediaRequest);
@@ -506,6 +570,96 @@ describe('PUT /request/:requestId (tv)', () => {
         .map((s) => s.seasonNumber)
         .sort((a, b) => a - b),
       [1, 2, 3]
+    );
+  });
+});
+
+describe('PUT /request/:requestId (ordering groups)', () => {
+  it('removes stored groups without rewriting the remaining snapshot', async () => {
+    const requestRepository = getRepository(MediaRequest);
+    const groupRepository = getRepository(OrderingGroupRequest);
+    const episodeRepository = getRepository(OrderingGroupEpisodeRequest);
+    const owner = await seedUser('admin@seerr.dev');
+    const mediaRequest = await seedOrderingTvRequest(owner);
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.TV,
+      orderingGroups: ['group-1'],
+      serverId: 11,
+      profileId: 21,
+      rootFolder: '/updated-tv',
+    });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(await groupRepository.count(), 1);
+    assert.strictEqual(await episodeRepository.count(), 2);
+
+    const saved = await requestRepository.findOneOrFail({
+      where: { id: mediaRequest.id },
+      relations: { orderingGroups: { episodes: true }, requestedBy: true },
+    });
+    assert.strictEqual(saved.requestedBy.id, owner.id);
+    assert.strictEqual(saved.is4k, true);
+    assert.strictEqual(saved.status, MediaRequestStatus.PENDING);
+    assert.strictEqual(saved.serverId, 11);
+    assert.strictEqual(saved.profileId, 21);
+    assert.strictEqual(saved.rootFolder, '/updated-tv');
+    assert.strictEqual(saved.orderingGroups[0].groupId, 'group-1');
+    assert.strictEqual(saved.orderingGroups[0].name, 'Stored First Arc');
+    assert.deepStrictEqual(
+      saved.orderingGroups[0].episodes.map((episode) => ({
+        seasonNumber: episode.seasonNumber,
+        episodeNumber: episode.episodeNumber,
+        name: episode.name,
+      })),
+      [
+        {
+          seasonNumber: 1,
+          episodeNumber: 1,
+          name: 'Stored canonical episode',
+        },
+        {
+          seasonNumber: 2,
+          episodeNumber: 2,
+          name: 'Second stored canonical episode',
+        },
+      ]
+    );
+  });
+
+  it('rejects additions to a historical ordering request', async () => {
+    const groupRepository = getRepository(OrderingGroupRequest);
+    const owner = await seedUser('admin@seerr.dev');
+    const mediaRequest = await seedOrderingTvRequest(owner);
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.TV,
+      orderingGroups: ['group-1', 'new-group'],
+    });
+
+    assert.strictEqual(res.status, 400);
+    assert.match(res.body.message, /cannot be added/i);
+    assert.strictEqual(await groupRepository.count(), 2);
+  });
+
+  it('deletes the parent request when every ordering group is removed', async () => {
+    const requestRepository = getRepository(MediaRequest);
+    const groupRepository = getRepository(OrderingGroupRequest);
+    const owner = await seedUser('admin@seerr.dev');
+    const mediaRequest = await seedOrderingTvRequest(owner);
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent
+      .put(`/request/${mediaRequest.id}`)
+      .send({ mediaType: MediaType.TV, orderingGroups: [] });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(await groupRepository.count(), 0);
+    assert.strictEqual(
+      await requestRepository.count({ where: { id: mediaRequest.id } }),
+      0
     );
   });
 });

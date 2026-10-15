@@ -7,6 +7,7 @@ import type { TvOrdering } from '@server/models/Tv';
 import {
   getSelectableOrderingGroups,
   orderingGroupRequestStates,
+  storedOrderingGroupRequestStates,
 } from './orderingRequestHelper';
 
 const createOrdering = (): TvOrdering => ({
@@ -190,5 +191,33 @@ describe('getSelectableOrderingGroups', () => {
     );
 
     assert.deepEqual(selectable, ['group-1', 'group-2']);
+  });
+});
+
+describe('storedOrderingGroupRequestStates', () => {
+  it('renders stored ordering groups from their request snapshots', () => {
+    const states = storedOrderingGroupRequestStates([
+      {
+        groupId: 'stored-group',
+        name: 'Stored Arc',
+        episodeCount: 2,
+        episodes: [
+          { seasonNumber: 1, episodeNumber: 1 },
+          { seasonNumber: 2, episodeNumber: 2 },
+        ],
+      },
+    ]);
+
+    assert.deepEqual(states, [
+      {
+        id: 'stored-group',
+        name: 'Stored Arc',
+        episodeCount: 2,
+        availableCount: 0,
+        requestedCount: 2,
+        requestableCount: 0,
+        status: 'requested',
+      },
+    ]);
   });
 });

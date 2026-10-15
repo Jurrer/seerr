@@ -16,6 +16,7 @@ import {
   QuotaRestrictedError,
   RequestPermissionError,
 } from '@server/entity/MediaRequest';
+import OrderingGroupRequest from '@server/entity/OrderingGroupRequest';
 import SeasonRequest from '@server/entity/SeasonRequest';
 import { User } from '@server/entity/User';
 import type {
@@ -479,6 +480,7 @@ requestRoutes.put<{ requestId: string }>(
           where: {
             id: requestId,
           },
+          relations: { orderingGroups: true },
         });
 
         if (!request) {
@@ -557,6 +559,56 @@ requestRoutes.put<{ requestId: string }>(
             request.languageProfileId = req.body.languageProfileId;
             request.tags = req.body.tags;
             request.requestedBy = requestUser as User;
+
+            if (request.orderingGroups.length > 0) {
+              const requestedOrderingGroups = req.body.orderingGroups;
+
+              if (
+                !Array.isArray(requestedOrderingGroups) ||
+                requestedOrderingGroups.some(
+                  (groupId) =>
+                    !request.orderingGroups.some(
+                      (group) => group.groupId === groupId
+                    )
+                )
+              ) {
+                return next({
+                  status: 400,
+                  message:
+                    'Ordering groups cannot be added to an existing request. Request them separately instead.',
+                });
+              }
+
+              const keptOrderingGroups = request.orderingGroups.filter(
+                (group) => requestedOrderingGroups.includes(group.groupId)
+              );
+              const removedOrderingGroups = request.orderingGroups.filter(
+                (group) => !requestedOrderingGroups.includes(group.groupId)
+              );
+              request.orderingGroups = keptOrderingGroups;
+
+              if (removedOrderingGroups.length > 0) {
+                await getRepository(OrderingGroupRequest).remove(
+                  removedOrderingGroups
+                );
+              }
+
+              if (request.orderingGroups.length === 0) {
+                await requestRepository.remove(request);
+              } else {
+                await requestRepository.save(request);
+              }
+
+              return res.status(200).json(request);
+            }
+
+            if (req.body.orderingGroups) {
+              return next({
+                status: 400,
+                message:
+                  'Ordering groups cannot be added to an existing request. Request them separately instead.',
+              });
+            }
 
             const requestedSeasons = req.body.seasons as number[] | undefined;
 

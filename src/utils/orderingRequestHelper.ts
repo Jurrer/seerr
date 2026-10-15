@@ -22,6 +22,13 @@ interface OrderingRequest {
   orderingGroups: OrderingRequestGroup[];
 }
 
+interface StoredOrderingGroup {
+  groupId: string;
+  name?: string;
+  episodeCount: number;
+  episodes: OrderingRequestEpisode[];
+}
+
 export interface OrderingGroupRequestState {
   id: string;
   name: string;
@@ -109,3 +116,16 @@ export const getSelectableOrderingGroups = (
   orderingGroupRequestStates(ordering, requests, is4k)
     .filter((group) => group.requestableCount > 0)
     .map((group) => group.id);
+
+export const storedOrderingGroupRequestStates = (
+  groups: StoredOrderingGroup[]
+): OrderingGroupRequestState[] =>
+  groups.map((group) => ({
+    id: group.groupId,
+    name: group.name ?? group.groupId,
+    episodeCount: group.episodeCount,
+    availableCount: 0,
+    requestedCount: group.episodes.length,
+    requestableCount: 0,
+    status: 'requested',
+  }));
