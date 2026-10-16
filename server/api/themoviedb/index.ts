@@ -505,19 +505,25 @@ class TheMovieDb extends ExternalAPI implements TvShowProvider {
     );
   }
 
-  public getTvEpisodeGroup({
+  public async getTvEpisodeGroup({
     orderingId,
     language = this.locale,
   }: {
     orderingId: string;
     language?: string;
   }): Promise<TmdbTvEpisodeGroupDetails> {
-    return this.get<TmdbTvEpisodeGroupDetails>(
+    const data = await this.get<TmdbTvEpisodeGroupDetails>(
       `/tv/episode_group/${orderingId}`,
       {
         params: { language },
       }
     );
+
+    for (const group of data.groups) {
+      group.episodes = this.normalizeEpisodeStills(group.episodes);
+    }
+
+    return data;
   }
 
   public getTvShowForScan = async ({
@@ -563,12 +569,7 @@ class TheMovieDb extends ExternalAPI implements TvShowProvider {
         }
       );
 
-      data.episodes = data.episodes.map((episode) => {
-        if (episode.still_path) {
-          episode.still_path = `https://image.tmdb.org/t/p/original/${episode.still_path}`;
-        }
-        return episode;
-      });
+      data.episodes = this.normalizeEpisodeStills(data.episodes);
 
       return data;
     } catch (e) {
@@ -577,6 +578,17 @@ class TheMovieDb extends ExternalAPI implements TvShowProvider {
       });
     }
   };
+
+  private normalizeEpisodeStills<T extends { still_path: string }>(
+    episodes: T[]
+  ): T[] {
+    return episodes.map((episode) => {
+      if (episode.still_path) {
+        episode.still_path = `https://image.tmdb.org/t/p/original${episode.still_path}`;
+      }
+      return episode;
+    });
+  }
 
   public async getMovieRecommendations({
     movieId,
