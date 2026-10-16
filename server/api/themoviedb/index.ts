@@ -583,7 +583,11 @@ class TheMovieDb extends ExternalAPI implements TvShowProvider {
     episodes: T[]
   ): T[] {
     return episodes.map((episode) => {
-      if (episode.still_path) {
+      if (
+        episode.still_path &&
+        !episode.still_path.startsWith('http://') &&
+        !episode.still_path.startsWith('https://')
+      ) {
         episode.still_path = `https://image.tmdb.org/t/p/original${episode.still_path}`;
       }
       return episode;
