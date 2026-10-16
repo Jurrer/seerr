@@ -1,4 +1,5 @@
 import { MediaRequestStatus } from '@server/constants/media';
+import { deriveOrderingStatusFromEpisodes } from '@server/lib/orderingRequestStatus';
 import { DbAwareColumn, resolveDbType } from '@server/utils/DbColumnHelper';
 import {
   AfterLoad,
@@ -62,37 +63,8 @@ class OrderingGroupRequest {
 
   @AfterLoad()
   private deriveStatusFromEpisodes(): void {
-    if (!this.episodes?.length) {
-      return;
-    }
-
-    if (
-      this.episodes.every(
-        (episode) => episode.status === MediaRequestStatus.COMPLETED
-      )
-    ) {
-      this.status = MediaRequestStatus.COMPLETED;
-    } else if (
-      this.episodes.every(
-        (episode) => episode.status === MediaRequestStatus.APPROVED
-      )
-    ) {
-      this.status = MediaRequestStatus.APPROVED;
-    } else if (
-      this.episodes.every(
-        (episode) => episode.status === MediaRequestStatus.DECLINED
-      )
-    ) {
-      this.status = MediaRequestStatus.DECLINED;
-    } else if (
-      this.episodes.some(
-        (episode) => episode.status === MediaRequestStatus.FAILED
-      )
-    ) {
-      this.status = MediaRequestStatus.FAILED;
-    } else {
-      this.status = MediaRequestStatus.PENDING;
-    }
+    this.status =
+      deriveOrderingStatusFromEpisodes(this.episodes ?? []) ?? this.status;
   }
 }
 

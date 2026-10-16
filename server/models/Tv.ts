@@ -159,6 +159,7 @@ export interface TvDetails {
   keywords: Keyword[];
   mediaInfo?: Media;
   currentOrdering?: TvOrderingSummary;
+  orderingError?: string;
   watchProviders?: WatchProviders[];
   onUserWatchlist?: boolean;
 }
@@ -323,6 +324,7 @@ export const mapTvDetails = (
   })),
   mediaInfo: media,
   currentOrdering,
+  orderingError: currentOrdering?.error,
   watchProviders: mapWatchProviders(show['watch/providers']?.results ?? {}),
   onUserWatchlist: userWatchlist,
 });

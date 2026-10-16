@@ -68,7 +68,7 @@ if (positionals.length > 0) {
 // @ts-ignore
 process.env.NODE_ENV = 'test';
 // configure ts
-process.env.TS_NODE_PROJECT = resolveImport('../tsconfig.json');
+process.env.TS_NODE_PROJECT = resolveImport('../../tsconfig.test.json');
 process.env.TS_NODE_FILES = 'true';
 
 const stream = run({

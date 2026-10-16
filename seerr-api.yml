@@ -1359,6 +1359,9 @@ components:
           $ref: '#/components/schemas/MediaInfo'
         currentOrdering:
           $ref: '#/components/schemas/TvOrdering'
+        orderingError:
+          type: string
+          description: The reason the applied TMDB ordering can no longer be resolved.
         watchProviders:
           type: array
           items:

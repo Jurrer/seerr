@@ -5,22 +5,20 @@ import { MediaRequest } from '@server/entity/MediaRequest';
 import OrderingGroupEpisodeRequest from '@server/entity/OrderingGroupEpisodeRequest';
 import type TvEpisode from '@server/entity/TvEpisode';
 import { Notification } from '@server/lib/notifications';
+import { isOrderingRequestComplete } from '@server/lib/orderingRequestStatus';
+import { canonicalEpisodeKey, canonicalEpisodeKeys } from './canonicalEpisode';
 
 type CanonicalEpisode = Pick<
   TvEpisode,
   'tmdbId' | 'seasonNumber' | 'episodeNumber'
 >;
 
-export const completeOrderingRequests = async (
+export const completeOrderingEpisodes = async (
   tmdbId: number,
   canonicalEpisodes: CanonicalEpisode[],
   is4k: boolean
-): Promise<void> => {
-  const canonicalKeys = new Set(
-    canonicalEpisodes.map(
-      (episode) => `${episode.seasonNumber}-${episode.episodeNumber}`
-    )
-  );
+): Promise<OrderingGroupEpisodeRequest[]> => {
+  const canonicalKeys = canonicalEpisodeKeys(canonicalEpisodes);
   const episodeRepository = getRepository(OrderingGroupEpisodeRequest);
   const relatedEpisodes = await episodeRepository.find({
     relations: { group: { request: { media: true, requestedBy: true } } },
@@ -28,18 +26,27 @@ export const completeOrderingRequests = async (
   });
   const episodesToComplete = relatedEpisodes.filter(
     (episode) =>
-      canonicalKeys.has(`${episode.seasonNumber}-${episode.episodeNumber}`) &&
+      canonicalKeys.has(canonicalEpisodeKey(episode)) &&
       episode.group.request.status === MediaRequestStatus.APPROVED
   );
 
   if (episodesToComplete.length === 0) {
-    return;
+    return [];
   }
 
   episodesToComplete.forEach((episode) => {
     episode.status = MediaRequestStatus.COMPLETED;
   });
   await episodeRepository.save(episodesToComplete);
+  return episodesToComplete;
+};
+
+export const completeOrderingRequests = async (
+  episodesToComplete: OrderingGroupEpisodeRequest[]
+): Promise<void> => {
+  if (episodesToComplete.length === 0) {
+    return;
+  }
 
   const completedRequests: MediaRequest[] = [];
   const relatedRequestIds = [
@@ -51,13 +58,7 @@ export const completeOrderingRequests = async (
     where: relatedRequestIds.map((id) => ({ id })),
   });
   for (const request of relatedRequests) {
-    if (
-      request.orderingGroups.every((group) =>
-        group.episodes.every(
-          (episode) => episode.status === MediaRequestStatus.COMPLETED
-        )
-      )
-    ) {
+    if (isOrderingRequestComplete(request.orderingGroups)) {
       request.status = MediaRequestStatus.COMPLETED;
       completedRequests.push(request);
     }

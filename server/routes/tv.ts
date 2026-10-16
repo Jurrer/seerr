@@ -5,6 +5,7 @@ import { ANIME_KEYWORD_ID } from '@server/api/themoviedb/constants';
 import type {
   TmdbKeyword,
   TmdbTvDetails,
+  TmdbTvEpisodeGroupDetails,
   TmdbTvEpisodeGroupResult,
 } from '@server/api/themoviedb/interfaces';
 import { MediaType } from '@server/constants/media';
@@ -64,6 +65,31 @@ function invalidOrdering() {
   };
 }
 
+function hasValidOrderingDetails(
+  ordering: TmdbTvEpisodeGroupDetails,
+  tvId: number,
+  orderingId: string
+) {
+  return (
+    ordering.id === orderingId &&
+    ordering.groups.length > 0 &&
+    ordering.groups.every(
+      (group) =>
+        group.episodes.length > 0 &&
+        group.episodes.every(
+          (episode) =>
+            episode.show_id === tvId &&
+            Number.isSafeInteger(episode.id) &&
+            episode.id > 0 &&
+            Number.isSafeInteger(episode.season_number) &&
+            episode.season_number >= 0 &&
+            Number.isSafeInteger(episode.episode_number) &&
+            episode.episode_number > 0
+        )
+    )
+  );
+}
+
 function getLanguage(req: Request) {
   return (req.query.language as string) ?? req.locale ?? 'en';
 }
@@ -112,12 +138,25 @@ tvRoutes.get('/:id', async (req, res, next) => {
         const group = groups.find(
           (candidate) => candidate.id === appliedOrdering.orderingId
         );
-        currentOrdering = group
-          ? mapTvOrdering(group, true)
-          : {
-              id: appliedOrdering.orderingId,
-              error: BROKEN_ORDERING_ERROR,
-            };
+        if (!group) {
+          currentOrdering = {
+            id: appliedOrdering.orderingId,
+            error: BROKEN_ORDERING_ERROR,
+          };
+        } else {
+          const ordering = await tmdb.getTvEpisodeGroup({
+            orderingId: appliedOrdering.orderingId,
+            language: getLanguage(req),
+          });
+          currentOrdering =
+            ordering &&
+            hasValidOrderingDetails(ordering, tv.id, appliedOrdering.orderingId)
+              ? mapTvOrdering(group, true)
+              : {
+                  id: appliedOrdering.orderingId,
+                  error: BROKEN_ORDERING_ERROR,
+                };
+        }
       } catch {
         currentOrdering = {
           id: appliedOrdering.orderingId,
@@ -245,6 +284,13 @@ tvRoutes.put(
       const group = groups.find((candidate) => candidate.id === orderingId);
 
       if (!group || group.episode_count <= 0 || group.group_count <= 0) {
+        return next(invalidOrdering());
+      }
+
+      const ordering = await tmdb.getTvEpisodeGroup({
+        orderingId,
+      });
+      if (!ordering || !hasValidOrderingDetails(ordering, tvId, orderingId)) {
         return next(invalidOrdering());
       }
 

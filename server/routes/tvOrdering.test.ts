@@ -333,6 +333,50 @@ describe('PUT /tv/:id/ordering', () => {
     assert.strictEqual(ordering.orderingId, ORDERING_ID);
   });
 
+  it('returns 422 and leaves the ordering unchanged when details are missing', async () => {
+    await seedOrdering(TV_ID, ORDERING_ID);
+    getEpisodeGroup = async () => null;
+    const agent = await loginAs('admin@seerr.dev');
+    const res = await agent
+      .put(`/tv/${TV_ID}/ordering`)
+      .send({ orderingId: ORDERING_ID });
+
+    assert.strictEqual(res.status, 422);
+    const ordering = await getRepository(TvOrdering).findOneOrFail({
+      where: { tmdbId: TV_ID },
+    });
+    assert.strictEqual(ordering.orderingId, ORDERING_ID);
+  });
+
+  it('returns 422 when group details contain invalid canonical episode identities', async () => {
+    await seedOrdering(TV_ID, ORDERING_ID);
+    getEpisodeGroup = async () => ({
+      ...episodeGroup,
+      groups: [
+        {
+          ...episodeGroup.groups[0],
+          episodes: [
+            {
+              ...episodeGroup.groups[0].episodes[0],
+              season_number: null,
+              episode_number: null,
+            },
+          ],
+        },
+      ],
+    });
+    const agent = await loginAs('admin@seerr.dev');
+    const res = await agent
+      .put(`/tv/${TV_ID}/ordering`)
+      .send({ orderingId: ORDERING_ID });
+
+    assert.strictEqual(res.status, 422);
+    const ordering = await getRepository(TvOrdering).findOneOrFail({
+      where: { tmdbId: TV_ID },
+    });
+    assert.strictEqual(ordering.orderingId, ORDERING_ID);
+  });
+
   it('returns 422 for an empty or missing ordering ID', async () => {
     const agent = await loginAs('admin@seerr.dev');
     const missing = await agent
@@ -548,6 +592,7 @@ describe('GET /tv/:id', () => {
     assert.strictEqual(res.body.id, TV_ID);
     assert.strictEqual(res.body.name, 'Alternate Ordering');
     assert.strictEqual('currentOrdering' in res.body, false);
+    assert.strictEqual('orderingError' in res.body, false);
   });
 
   it('includes the currently applied ordering', async () => {
@@ -582,9 +627,26 @@ describe('GET /tv/:id', () => {
 
     assert.strictEqual(res.status, 200);
     assert.strictEqual(res.body.name, 'Alternate Ordering');
+    assert.strictEqual(
+      res.body.orderingError,
+      'The applied TMDB ordering is no longer available.'
+    );
     assert.deepStrictEqual(res.body.currentOrdering, {
       id: ORDERING_ID,
       error: 'The applied TMDB ordering is no longer available.',
     });
+  });
+
+  it('reports a broken applied ordering when the listed ordering has invalid details', async () => {
+    await seedOrdering(TV_ID, ORDERING_ID);
+    getEpisodeGroup = async () => null;
+    const agent = await loginAs('demo@seerr.dev');
+    const res = await agent.get(`/tv/${TV_ID}`);
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(
+      res.body.orderingError,
+      'The applied TMDB ordering is no longer available.'
+    );
   });
 });

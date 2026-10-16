@@ -1,4 +1,8 @@
-import { MediaRequestStatus, MediaStatus } from '@server/constants/media';
+import { MediaRequestStatus } from '@server/constants/media';
+import {
+  canonicalEpisodeAvailable,
+  canonicalEpisodeKey,
+} from '@server/lib/canonicalEpisode';
 import type { TvOrdering } from '@server/models/Tv';
 
 interface OrderingRequestEpisode {
@@ -40,9 +44,6 @@ export interface OrderingGroupRequestState {
   status: 'available' | 'partial' | 'requested' | 'not-requested';
 }
 
-const canonicalKey = (seasonNumber: number, episodeNumber: number) =>
-  `${seasonNumber}-${episodeNumber}`;
-
 export const orderingGroupRequestStates = (
   ordering: TvOrdering,
   requests: OrderingRequest[],
@@ -56,9 +57,8 @@ export const orderingGroupRequestStates = (
         request.status !== MediaRequestStatus.COMPLETED
     );
 
-    const availableEpisodes = group.episodes.filter(
-      (episode) =>
-        episode[is4k ? 'status4k' : 'status'] === MediaStatus.AVAILABLE
+    const availableEpisodes = group.episodes.filter((episode) =>
+      canonicalEpisodeAvailable(episode, is4k)
     );
     const requestedEpisodes = group.episodes.filter((episode) =>
       activeRequests.some(
@@ -69,14 +69,11 @@ export const orderingGroupRequestStates = (
           request.orderingGroups.some((orderingGroup) =>
             orderingGroup.episodes.some(
               (requestEpisode) =>
-                canonicalKey(
-                  requestEpisode.seasonNumber,
-                  requestEpisode.episodeNumber
-                ) ===
-                canonicalKey(
-                  episode.canonicalSeasonNumber,
-                  episode.canonicalEpisodeNumber
-                )
+                canonicalEpisodeKey(requestEpisode) ===
+                canonicalEpisodeKey({
+                  seasonNumber: episode.canonicalSeasonNumber,
+                  episodeNumber: episode.canonicalEpisodeNumber,
+                })
             )
           )
       )

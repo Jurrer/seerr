@@ -110,6 +110,10 @@ export interface AddSeriesEpisode {
   episodeNumber: number;
 }
 
+interface ExactEpisodeMonitor {
+  monitor: () => Promise<void>;
+}
+
 export interface LanguageProfile {
   id: number;
   name: string;
@@ -219,7 +223,7 @@ class SonarrAPI extends ServarrBase<{
 
       // If the series already exists, we will simply just update it
       if (series.id) {
-        let exactEpisodeIds: number[] | undefined;
+        let exactEpisodeMonitor: ExactEpisodeMonitor | undefined;
         const originalSeasons = series.seasons.map((season) => ({
           seasonNumber: season.seasonNumber,
           monitored: season.monitored,
@@ -228,9 +232,8 @@ class SonarrAPI extends ServarrBase<{
         const originalTags = series.tags;
 
         if (options.episodes) {
-          const sonarrEpisodes = await this.getEpisodes(series.id);
-          exactEpisodeIds = this.getExactEpisodeIds(
-            sonarrEpisodes,
+          exactEpisodeMonitor = await this.resolveExactEpisodeMonitoring(
+            series.id,
             options.episodes
           );
           series.seasons = series.seasons.map((season) => ({
@@ -267,23 +270,15 @@ class SonarrAPI extends ServarrBase<{
             series: newSeriesResponse.data,
           });
 
-          if (exactEpisodeIds) {
-            if (exactEpisodeIds.length > 0) {
-              logger.debug('Monitoring exact episodes for request.', {
-                label: 'Sonarr',
-                seriesId: newSeriesResponse.data.id,
-                episodeCount: exactEpisodeIds.length,
-              });
-
-              try {
-                await this.monitorEpisodes(exactEpisodeIds);
-              } catch (e) {
-                series.seasons = originalSeasons;
-                series.monitored = originalMonitored;
-                series.tags = originalTags;
-                await this.axios.put<SonarrSeries>('/series', series);
-                throw e;
-              }
+          if (exactEpisodeMonitor) {
+            try {
+              await exactEpisodeMonitor.monitor();
+            } catch (e) {
+              series.seasons = originalSeasons;
+              series.monitored = originalMonitored;
+              series.tags = originalTags;
+              await this.axios.put<SonarrSeries>('/series', series);
+              throw e;
             }
           } else {
             try {
@@ -367,17 +362,12 @@ class SonarrAPI extends ServarrBase<{
         });
 
         if (options.episodes) {
-          const sonarrEpisodes = await this.getEpisodes(
-            createdSeriesResponse.data.id
-          );
-          const episodeIds = this.getExactEpisodeIds(
-            sonarrEpisodes,
+          const exactEpisodeMonitor = await this.resolveExactEpisodeMonitoring(
+            createdSeriesResponse.data.id,
             options.episodes
           );
 
-          if (episodeIds.length > 0) {
-            await this.monitorEpisodes(episodeIds);
-          }
+          await exactEpisodeMonitor.monitor();
         }
       } else {
         logger.error('Failed to add series to Sonarr', {
@@ -421,10 +411,11 @@ class SonarrAPI extends ServarrBase<{
     }
   }
 
-  private getExactEpisodeIds(
-    sonarrEpisodes: EpisodeResult[],
+  private async resolveExactEpisodeMonitoring(
+    seriesId: number,
     requestedEpisodes: AddSeriesEpisode[]
-  ): number[] {
+  ): Promise<ExactEpisodeMonitor> {
+    const sonarrEpisodes = await this.getEpisodes(seriesId);
     const episodeIds = new Set<number>();
 
     for (const requestedEpisode of requestedEpisodes) {
@@ -443,7 +434,21 @@ class SonarrAPI extends ServarrBase<{
       episodeIds.add(sonarrEpisode.id);
     }
 
-    return [...episodeIds];
+    return {
+      monitor: async () => {
+        if (episodeIds.size === 0) {
+          return;
+        }
+
+        logger.debug('Monitoring exact episodes for request.', {
+          label: 'Sonarr',
+          seriesId,
+          episodeCount: episodeIds.size,
+        });
+
+        await this.monitorEpisodes([...episodeIds]);
+      },
+    };
   }
 
   public async searchSeries(seriesId: number): Promise<void> {

@@ -2,7 +2,11 @@ import type { TmdbTvEpisodeGroupDetails } from '@server/api/themoviedb/interface
 import { MediaStatus } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import TvEpisode from '@server/entity/TvEpisode';
-import { completeOrderingRequests } from '@server/lib/orderingRequest';
+import {
+  completeOrderingEpisodes,
+  completeOrderingRequests,
+} from '@server/lib/orderingRequest';
+import { canonicalEpisodeKey, canonicalEpisodeKeys } from './canonicalEpisode';
 
 type CanonicalEpisode = Pick<
   TvEpisode,
@@ -15,21 +19,13 @@ export const seedTvEpisodes = async (
 ): Promise<TvEpisode[]> => {
   const repository = getRepository(TvEpisode);
   const existingEpisodes = await repository.find({ where: { tmdbId } });
-  const existingKeys = new Set(
-    existingEpisodes.map(
-      (episode) => `${episode.seasonNumber}-${episode.episodeNumber}`
-    )
-  );
+  const existingKeys = canonicalEpisodeKeys(existingEpisodes);
   const missingEpisodes = canonicalEpisodes.filter(
-    (episode) =>
-      !existingKeys.has(`${episode.seasonNumber}-${episode.episodeNumber}`)
+    (episode) => !existingKeys.has(canonicalEpisodeKey(episode))
   );
   const uniqueMissingEpisodes = [
     ...new Map(
-      missingEpisodes.map((episode) => [
-        `${episode.seasonNumber}-${episode.episodeNumber}`,
-        episode,
-      ])
+      missingEpisodes.map((episode) => [canonicalEpisodeKey(episode), episode])
     ).values(),
   ];
 
@@ -70,30 +66,24 @@ export const syncTvEpisodeAvailability = async (
   const repository = getRepository(TvEpisode);
   const existingEpisodes = await repository.find({ where: { tmdbId } });
   const existingByCanonicalKey = new Map(
-    existingEpisodes.map((episode) => [
-      `${episode.seasonNumber}-${episode.episodeNumber}`,
-      episode,
-    ])
+    existingEpisodes.map((episode) => [canonicalEpisodeKey(episode), episode])
   );
   const canonicalKeys = new Set(
-    canonicalEpisodes.map(
-      (episode) => `${episode.seasonNumber}-${episode.episodeNumber}`
-    )
+    canonicalEpisodes.map((episode) => canonicalEpisodeKey(episode))
   );
   const changedEpisodes = existingEpisodes
     .filter((episode) => episode.seasonNumber === seasonNumber)
     .map((episode) => {
-      const key = `${episode.seasonNumber}-${episode.episodeNumber}`;
-
-      episode[is4k ? 'status4k' : 'status'] = canonicalKeys.has(key)
+      episode[is4k ? 'status4k' : 'status'] = canonicalKeys.has(
+        canonicalEpisodeKey(episode)
+      )
         ? MediaStatus.AVAILABLE
         : MediaStatus.UNKNOWN;
       return episode;
     });
 
   for (const canonicalEpisode of canonicalEpisodes) {
-    const key = `${canonicalEpisode.seasonNumber}-${canonicalEpisode.episodeNumber}`;
-    if (existingByCanonicalKey.has(key)) {
+    if (existingByCanonicalKey.has(canonicalEpisodeKey(canonicalEpisode))) {
       continue;
     }
 
@@ -106,7 +96,12 @@ export const syncTvEpisodeAvailability = async (
     await repository.save(changedEpisodes);
   }
 
-  await completeOrderingRequests(tmdbId, canonicalEpisodes, is4k);
+  const completedEpisodes = await completeOrderingEpisodes(
+    tmdbId,
+    canonicalEpisodes,
+    is4k
+  );
+  await completeOrderingRequests(completedEpisodes);
 };
 
 export const updateTvEpisodeAvailability = async (

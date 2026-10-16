@@ -157,6 +157,7 @@ const TvRequestModal = ({
         .map((group) => group.id)
     : [];
   const orderingError =
+    data?.orderingError ||
     data?.currentOrdering?.error ||
     (isCreatingOrderingRequest &&
       !isLoadingAppliedOrdering &&

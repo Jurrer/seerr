@@ -8,6 +8,12 @@ import { getRepository } from '@server/datasource';
 import OrderingGroupEpisodeRequest from '@server/entity/OrderingGroupEpisodeRequest';
 import OrderingGroupRequest from '@server/entity/OrderingGroupRequest';
 import type { MediaRequestBody } from '@server/interfaces/api/requestInterfaces';
+import {
+  canonicalEpisodeAvailable,
+  canonicalEpisodeKey,
+  canonicalEpisodeStatus,
+  type CanonicalEpisodeKey,
+} from '@server/lib/canonicalEpisode';
 import notificationManager, { Notification } from '@server/lib/notifications';
 import overrideRules from '@server/lib/overrideRules';
 import { Permission } from '@server/lib/permissions';
@@ -436,23 +442,22 @@ export class MediaRequest {
           tmdbMediaShow.id,
           ordering
         );
-        const availableCanonicalEpisodes = new Set(
+        const availableCanonicalEpisodes = new Set<CanonicalEpisodeKey>(
           seededCanonicalEpisodes
-            .filter(
-              (episode) =>
-                episode[requestBody.is4k ? 'status4k' : 'status'] ===
-                MediaStatus.AVAILABLE
+            .filter((episode) =>
+              canonicalEpisodeAvailable(episode, !!requestBody.is4k)
             )
-            .map(
-              (episode) => `${episode.seasonNumber}-${episode.episodeNumber}`
-            )
+            .map((episode) => canonicalEpisodeKey(episode))
         );
-        const requestedCanonicalEpisodes = new Set<string>();
+        const requestedCanonicalEpisodes = new Set<CanonicalEpisodeKey>();
         const selectedCanonicalEpisodes = selectedGroups.flatMap((group) =>
           group.episodes.map((episode) => ({
             seasonNumber: episode.season_number,
             episodeNumber: episode.episode_number,
-            canonicalKey: `${episode.season_number}-${episode.episode_number}`,
+            canonicalKey: canonicalEpisodeKey({
+              seasonNumber: episode.season_number,
+              episodeNumber: episode.episode_number,
+            }),
           }))
         );
         const activeRequests = (media.requests ?? []).filter(
@@ -473,9 +478,7 @@ export class MediaRequest {
 
           for (const group of request.orderingGroups ?? []) {
             for (const episode of group.episodes) {
-              requestedCanonicalEpisodes.add(
-                `${episode.seasonNumber}-${episode.episodeNumber}`
-              );
+              requestedCanonicalEpisodes.add(canonicalEpisodeKey(episode));
             }
           }
         }
@@ -489,7 +492,10 @@ export class MediaRequest {
                 seasonNumber: episode.season_number,
                 episodeNumber: episode.episode_number,
                 name: episode.name,
-                canonicalKey: `${episode.season_number}-${episode.episode_number}`,
+                canonicalKey: canonicalEpisodeKey({
+                  seasonNumber: episode.season_number,
+                  episodeNumber: episode.episode_number,
+                }),
               }))
               .filter(
                 (episode) =>
@@ -613,9 +619,9 @@ export class MediaRequest {
           ...media.seasons
             .filter(
               (season) =>
-                season[requestBody.is4k ? 'status4k' : 'status'] !==
+                canonicalEpisodeStatus(season, !!requestBody.is4k) !==
                   MediaStatus.UNKNOWN &&
-                season[requestBody.is4k ? 'status4k' : 'status'] !==
+                canonicalEpisodeStatus(season, !!requestBody.is4k) !==
                   MediaStatus.DELETED
             )
             .map((season) => season.seasonNumber),

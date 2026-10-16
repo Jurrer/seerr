@@ -5,6 +5,7 @@ import RTRotten from '@app/assets/rt_rotten.svg';
 import Spinner from '@app/assets/spinner.svg';
 import TmdbLogo from '@app/assets/tmdb_logo.svg';
 import BlocklistModal from '@app/components/BlocklistModal';
+import Alert from '@app/components/Common/Alert';
 import Badge from '@app/components/Common/Badge';
 import Button from '@app/components/Common/Button';
 import CachedImage from '@app/components/Common/CachedImage';
@@ -25,6 +26,10 @@ import RequestModal from '@app/components/RequestModal';
 import Slider from '@app/components/Slider';
 import StatusBadge from '@app/components/StatusBadge';
 import Ordering from '@app/components/TvDetails/Ordering';
+import OrderingSelectorButton, {
+  shouldShowOrderingButton,
+} from '@app/components/TvDetails/OrderingSelectorButton';
+import OrderingSelectorModal from '@app/components/TvDetails/OrderingSelectorModal';
 import Season from '@app/components/TvDetails/Season';
 import useDeepLinks from '@app/hooks/useDeepLinks';
 import useLocale from '@app/hooks/useLocale';
@@ -62,7 +67,10 @@ import {
   MediaType,
 } from '@server/constants/media';
 import { MediaServerType } from '@server/constants/server';
-import type { TvDetails as TvDetailsType } from '@server/models/Tv';
+import type {
+  TvDetails as TvDetailsType,
+  TvOrderingSummary,
+} from '@server/models/Tv';
 import type { Crew } from '@server/models/common';
 import axios from 'axios';
 import { countries } from 'country-flag-icons';
@@ -99,6 +107,8 @@ const messages = defineMessages('components.TvDetails', {
   reportissue: 'Report an Issue',
   manageseries: 'Manage Series',
   seasonstitle: 'Seasons',
+  orderingerror:
+    'The current ordering is unavailable. Please ask an administrator to reset it.',
   episodeCount: '{episodeCount, plural, one {# Episode} other {# Episodes}}',
   seasonnumber: 'Season {seasonNumber}',
   status4k: '4K {status}',
@@ -124,6 +134,7 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
   const intl = useIntl();
   const { locale } = useLocale();
   const [showRequestModal, setShowRequestModal] = useState(false);
+  const [showOrderingModal, setShowOrderingModal] = useState(false);
   const [showManager, setShowManager] = useState(false);
   const [showIssueModal, setShowIssueModal] = useState(false);
   const [isUpdating, setIsUpdating] = useState<boolean>(false);
@@ -153,6 +164,18 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
   const { data: ratingData } = useSWR<RTRating>(
     `/api/v1/tv/${router.query.tvId}/ratings`
   );
+  const orderingsKey = hasPermission(Permission.MANAGE_SETTINGS)
+    ? `/api/v1/tv/${router.query.tvId}/orderings`
+    : null;
+  const { data: orderings, error: orderingsError } =
+    useSWR<TvOrderingSummary[]>(orderingsKey);
+  const showOrderingButton = shouldShowOrderingButton({
+    hasPermission: hasPermission(Permission.MANAGE_SETTINGS),
+    orderings,
+    orderingsError,
+    currentOrdering: data?.currentOrdering,
+    orderingError: data?.orderingError,
+  });
 
   const sortedCrew = useMemo(
     () => sortCrewPriority(data?.credits.crew ?? []),
@@ -801,12 +824,22 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
               ))}
             </div>
           )}
-          <h2 className="py-4">
-            {data.currentOrdering?.name ||
-              intl.formatMessage(messages.seasonstitle)}
-          </h2>
+          <div className="flex items-center justify-between py-4">
+            <h2>
+              {data.orderingError
+                ? intl.formatMessage(messages.orderingerror)
+                : data.currentOrdering?.name ||
+                  intl.formatMessage(messages.seasonstitle)}
+            </h2>
+            <OrderingSelectorButton
+              show={showOrderingButton}
+              onClick={() => setShowOrderingModal(true)}
+            />
+          </div>
           <div className="flex w-full flex-col space-y-2">
-            {data.currentOrdering ? (
+            {data.orderingError ? (
+              <Alert type="error">{data.orderingError}</Alert>
+            ) : data.currentOrdering ? (
               <Ordering tvId={data.id} />
             ) : (
               data.seasons
@@ -1404,6 +1437,14 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
         linkUrl={`/tv/${data.id}/similar`}
         hideWhenEmpty
       />
+      {showOrderingModal && data && (
+        <OrderingSelectorModal
+          tvId={data.id}
+          orderingKey={`/api/v1/tv/${data.id}/orderings`}
+          currentOrdering={data.currentOrdering}
+          onCancel={() => setShowOrderingModal(false)}
+        />
+      )}
       <div className="extra-bottom-space relative" />
     </div>
   );
